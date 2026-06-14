@@ -38,7 +38,7 @@ class _ChatGroupPageState extends State<ChatGroupPage>
       FlutterLocalNotificationsPlugin();
 
   // 💡 Telegram Credentials
-  static const String _telegramBotToken ="7705422769:AAE9Litq4FezGMrTYRzHuyi8SYUMgcxckkI";
+  static const String _telegramBotToken = "7705422769:AAE9Litq4FezGMrTYRzHuyi8SYUMgcxckkI";
   static const String _telegramChatId = "-1003952897986";
 
   // 💡 Local cache to store resolved Telegram File URLs (prevents continuous API rebuilding)
@@ -78,7 +78,7 @@ class _ChatGroupPageState extends State<ChatGroupPage>
       iOS: iosSettings,
     );
 
-    // 💡 FIXED: Configured initialize with the required named 'settings' parameter pattern
+    // 💡 FIXED: Supplied 'initSettings' to the required named parameter 'settings'
     await _localNotifications.initialize(
       settings: initSettings,
       onDidReceiveNotificationResponse: (NotificationResponse response) {
@@ -150,7 +150,6 @@ class _ChatGroupPageState extends State<ChatGroupPage>
       iOS: iosDetails,
     );
 
-    // 💡 FIXED: Passed variables as NAMED parameters to avoid compiler crash with show() method in v20+
     await _localNotifications.show(
       id: DateTime.now().millisecondsSinceEpoch % 100000,
       title: senderName,
@@ -187,8 +186,7 @@ class _ChatGroupPageState extends State<ChatGroupPage>
     _chatChannelSubscription = Supabase.instance.client
         .channel('public:GroupChats')
         .onPostgresChanges(
-          event: PostgresChangeEvent
-              .all, // Listen to INSERT, UPDATE, and DELETE actions
+          event: PostgresChangeEvent.all, // Listen to INSERT, UPDATE, and DELETE actions
           schema: 'public',
           table: 'GroupChats',
           callback: (payload) {
@@ -348,21 +346,28 @@ class _ChatGroupPageState extends State<ChatGroupPage>
       final fileId = await _uploadFileToTelegram(localPath, filename);
 
       if (fileId != null) {
-        await Supabase.instance.client.from('GroupChats').insert({
-          'sender_id': widget.currentUserId,
-          'sender_name': AuthService.currentUser?.name ?? 'Anonymous Student',
-          'sender_roll': AuthService.currentUser?.rollNumber ?? '',
-          'sender_email': AuthService.currentUser?.email ?? '',
-          'sender_branch': AuthService.currentUser?.department ?? 'B.Tech (IT)',
-          'message_body': 'Shared file: $filename',
-          'has_attachment': true,
-          'attachment_meta': {
-            'file_id': fileId,
-            'file_name': filename,
-            'file_size': pickedFile.size,
-            'extension': pickedFile.extension ?? 'octet-stream',
-          },
-        });
+        // 💡 SECURE DELEGATION: Route file transaction details through your intermediate API Gateway
+        final token = await AuthService.getAuthToken();
+        final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/chat/send?token=$token');
+        
+        final response = await http.post(
+          url,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'body': 'Shared file: $filename',
+            'has_attachment': true,
+            'attachment_meta': {
+              'file_id': fileId,
+              'file_name': filename,
+              'file_size': pickedFile.size,
+              'extension': pickedFile.extension ?? 'octet-stream',
+            },
+          }),
+        );
+
+        if (response.statusCode != 200) {
+          throw Exception("API Gateway returned ${response.statusCode}");
+        }
       } else {
         setState(() {
           _messagesList.removeWhere(
@@ -423,75 +428,40 @@ class _ChatGroupPageState extends State<ChatGroupPage>
     _scrollToBottom();
 
     try {
-      // 💡 Attempt 1: Try inserting with current parsed ID format
-      await Supabase.instance.client.from('GroupChats').insert({
-        'sender_id': widget.currentUserId,
-        'sender_name': AuthService.currentUser?.name ?? 'Anonymous Student',
-        'sender_roll': AuthService.currentUser?.rollNumber ?? '',
-        'sender_email': AuthService.currentUser?.email ?? '',
-        'sender_branch': AuthService.currentUser?.department ?? 'B.Tech (IT)',
-        'message_body': bodyText,
-        'has_attachment': false,
-        'attachment_meta': null,
-        'reply_to_id': replyToId,
-        'reply_to_name': replyToName,
-        'reply_to_body': replyToBody,
-      });
-    } catch (e) {
-      debugPrint(
-        "First reply attempt failed: $e. Trying automatic type conversion fallback...",
-      );
-      try {
-        // 💡 Attempt 2: Auto-convert datatype (e.g. if replyToId is int, send String; if String, send int)
-        final alternativeReplyId = (replyToId is int)
-            ? replyToId.toString()
-            : (int.tryParse(replyToId.toString()) ?? replyToId);
-
-        await Supabase.instance.client.from('GroupChats').insert({
-          'sender_id': widget.currentUserId,
-          'sender_name': AuthService.currentUser?.name ?? 'Anonymous Student',
-          'sender_roll': AuthService.currentUser?.rollNumber ?? '',
-          'sender_email': AuthService.currentUser?.email ?? '',
-          'sender_branch': AuthService.currentUser?.department ?? 'B.Tech (IT)',
-          'message_body': bodyText,
+      // 💡 SECURE DELEGATION: Route text details to the central proxy API
+      final token = await AuthService.getAuthToken();
+      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/chat/send?token=$token');
+      
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'body': bodyText,
           'has_attachment': false,
           'attachment_meta': null,
-          'reply_to_id': alternativeReplyId,
+          'reply_to_id': replyToId,
           'reply_to_name': replyToName,
           'reply_to_body': replyToBody,
-        });
-      } catch (fallbackError) {
-        debugPrint(
-          "Adaptive retry failed: $fallbackError. Sending standard fallback...",
-        );
-        try {
-          // Attempt 3: If reply mapping completely fails, drop columns and send standard message safely
-          await Supabase.instance.client.from('GroupChats').insert({
-            'sender_id': widget.currentUserId,
-            'sender_name': AuthService.currentUser?.name ?? 'Anonymous Student',
-            'sender_roll': AuthService.currentUser?.rollNumber ?? '',
-            'sender_email': AuthService.currentUser?.email ?? '',
-            'sender_branch':
-                AuthService.currentUser?.department ?? 'B.Tech (IT)',
-            'message_body': bodyText,
-            'has_attachment': false,
-            'attachment_meta': null,
-          });
-        } catch (finalError) {
-          setState(() {
-            _messagesList.removeWhere(
-              (msg) =>
-                  msg['sendingStatus'] == 'sending' &&
-                  msg['message_body'] == bodyText,
-            );
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Message transfer failure. Syncing backend...'),
-            ),
-          );
-        }
+        }),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception("API Gateway returned ${response.statusCode}");
       }
+    } catch (e) {
+      debugPrint("❌ Chat gateway transmission failed: $e");
+      setState(() {
+        _messagesList.removeWhere(
+          (msg) =>
+              msg['sendingStatus'] == 'sending' &&
+              msg['message_body'] == bodyText,
+        );
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to transmit message payload. Details: $e'),
+        ),
+      );
     }
   }
 
@@ -636,6 +606,86 @@ class _ChatGroupPageState extends State<ChatGroupPage>
       ];
       return '${date.day} ${months[date.month - 1]}';
     }
+  }
+
+  // 💡 FIXED: Re-defined the missing '_showMessageActionSheet' method
+  void _showMessageActionSheet(Map<String, dynamic> message, bool isMe) {
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(EduDesignTokens.radius3xl),
+        ),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: EduComponents.icon(
+                    context: context,
+                    iconData: const SolarIcon(
+                      SolarIcons.Reply,
+                      weight: SolarIconWeight.outline,
+                    ),
+                    color: Theme.of(context).primaryColor,
+                  ),
+                  title: const Text('Reply to message'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    setState(() {
+                      _replyingToMessage = message;
+                      _editingMessage = null;
+                    });
+                  },
+                ),
+                if (isMe) ...[
+                  ListTile(
+                    leading: EduComponents.icon(
+                      context: context,
+                      iconData: const SolarIcon(
+                        SolarIcons.Pen,
+                        weight: SolarIconWeight.outline,
+                      ),
+                      color: Colors.amber.shade700,
+                    ),
+                    title: const Text('Edit message'),
+                    onTap: () {
+                      Navigator.pop(context);
+                      setState(() {
+                        _editingMessage = message;
+                        _replyingToMessage = null;
+                        _msgController.text = message['message_body'] ?? '';
+                      });
+                    },
+                  ),
+                  ListTile(
+                    leading: EduComponents.icon(
+                      context: context,
+                      iconData: const SolarIcon(
+                        SolarIcons.TrashBinMinimalistic,
+                        weight: SolarIconWeight.outline,
+                      ),
+                      color: systemExt.btnDangerText,
+                    ),
+                    title: const Text('Delete message'),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _deleteMessage(message);
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -897,85 +947,6 @@ class _ChatGroupPageState extends State<ChatGroupPage>
     );
   }
 
-  void _showMessageActionSheet(Map<String, dynamic> message, bool isMe) {
-    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Theme.of(context).cardColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(EduDesignTokens.radius3xl),
-        ),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  leading: EduComponents.icon(
-                    context: context,
-                    iconData: const SolarIcon(
-                      SolarIcons.Reply,
-                      weight: SolarIconWeight.outline,
-                    ),
-                    color: Theme.of(context).primaryColor,
-                  ),
-                  title: const Text('Reply to message'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    setState(() {
-                      _replyingToMessage = message;
-                      _editingMessage = null;
-                    });
-                  },
-                ),
-                if (isMe) ...[
-                  ListTile(
-                    leading: EduComponents.icon(
-                      context: context,
-                      iconData: const SolarIcon(
-                        SolarIcons.Pen,
-                        weight: SolarIconWeight.outline,
-                      ),
-                      color: Colors.amber.shade700,
-                    ),
-                    title: const Text('Edit message'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      setState(() {
-                        _editingMessage = message;
-                        _replyingToMessage = null;
-                        _msgController.text = message['message_body'] ?? '';
-                      });
-                    },
-                  ),
-                  ListTile(
-                    leading: EduComponents.icon(
-                      context: context,
-                      iconData: const SolarIcon(
-                        SolarIcons.TrashBinMinimalistic,
-                        weight: SolarIconWeight.outline,
-                      ),
-                      color: systemExt.btnDangerText,
-                    ),
-                    title: const Text('Delete message'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      _deleteMessage(message);
-                    },
-                  ),
-                ],
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   Widget _buildChatBubbleCard(Map<String, dynamic> msg, bool isMe) {
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
     final textTheme = Theme.of(context).textTheme;
@@ -1018,8 +989,8 @@ class _ChatGroupPageState extends State<ChatGroupPage>
         decoration: BoxDecoration(
           color: isMe
               ? (Theme.of(context).brightness == Brightness.dark
-                    ? EduDesignTokens.indigo500.withOpacity(0.15)
-                    : EduDesignTokens.indigo50)
+                  ? EduDesignTokens.indigo500.withOpacity(0.15)
+                  : EduDesignTokens.indigo50)
               : Theme.of(context).cardColor,
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(EduDesignTokens.radius2xl),
@@ -1034,8 +1005,8 @@ class _ChatGroupPageState extends State<ChatGroupPage>
           border: Border.all(
             color: isMe
                 ? (Theme.of(context).brightness == Brightness.dark
-                      ? EduDesignTokens.indigo500.withOpacity(0.3)
-                      : const Color(0xFFC7D2FE))
+                    ? EduDesignTokens.indigo500.withOpacity(0.3)
+                    : const Color(0xFFC7D2FE))
                 : systemExt.borderNeutral,
           ),
         ),
@@ -1740,9 +1711,9 @@ class _ChatGroupPageState extends State<ChatGroupPage>
                 keyboardType: TextInputType.multiline,
                 textInputAction: TextInputAction.newline,
                 style: theme.textTheme.bodyLarge?.copyWith(fontSize: 14),
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   hintText: "Type message...",
-                  hintStyle: const TextStyle(fontSize: 13, color: EduDesignTokens.slate400),
+                  hintStyle: TextStyle(fontSize: 13, color: EduDesignTokens.slate400),
                   border: InputBorder.none,
                   enabledBorder: InputBorder.none,
                   focusedBorder: InputBorder.none,
