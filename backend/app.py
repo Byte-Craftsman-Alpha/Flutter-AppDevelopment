@@ -36,7 +36,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 43200  # Tokens stay valid persistently for 30 Day
 # Initialize Administrative Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-def get_field_insensitive(data: Dict[str, Any], target_keys: List[str], default_val: str = "") -> str:
+def get_field_insensitive(data: Dict[str, Any], target_keys: List[String], default_val: str = "") -> str:
     """
     Looks up a dictionary value by matching keys case-insensitively 
     and ignoring space/underscore variations. This eliminates key errors.
@@ -233,7 +233,7 @@ async def handle_chat_delivery(message: dict, token: str):
 
 
 # -------------------------------------------------------------------------
-# 4. ACADEMIC SCHEDULES & TIMETABLE RESOURCE DELIVERY ENGINE
+# 4. ACADEMIC SCHEDULES & TIMETABLE RESOURCE DELIVERY ENGINE (Upgraded)
 # -------------------------------------------------------------------------
 @app.get("/api/schedule/fetch")
 async def fetch_academic_schedules(department: str, semester: str, group_name: Optional[str] = None):
@@ -242,28 +242,41 @@ async def fetch_academic_schedules(department: str, semester: str, group_name: O
         response = supabase.table("Monthly Calendar").select("*").execute()
         return response.data
 
-    query = supabase.table("Weekly Schedules")\
-        .select("*")\
-        .eq("department", department)\
-        .eq("semester", semester)
+    # Fetch all weekly schedules to perform case-insensitive and column-insensitive filtering in memory.
+    # This completely shields the synchronization pipeline from PostgreSQL structural and casing variations.
+    response = supabase.table("Weekly Schedules").select("*").execute()
+    all_schedules = response.data or []
 
-    # 💡 FIX: Inject section group matching filter parameter when sent by the client app
+    # 💡 1. Prioritize strict matching by group_name (ScheduleGroupName) if provided by the client
     if group_name:
-        # Tries matching column configurations against standard case variants cleanly
-        query = query.eq("ScheduleGroupName", group_name)
+        matched_by_group = []
+        for row in all_schedules:
+            row_group = get_field_insensitive(
+                row, 
+                ["schedulegroupname", "schedule_group_name", "group_name", "group"]
+            )
+            if row_group.lower() == group_name.lower():
+                matched_by_group.append(row)
+        
+        if matched_by_group:
+            return matched_by_group
 
-    response = query.execute()
-    
-    # Dynamic fallback check: if strict group query returns empty rows, retry against generic logs
-    if not response.data and group_name:
-        alt_response = supabase.table("Weekly Schedules")\
-            .select("*")\
-            .eq("department", department)\
-            .eq("semester", semester)\
-            .execute()
-        return alt_response.data
+    # 💡 2. Fallback: Filter by department and semester case-insensitively
+    matched_by_filters = []
+    for row in all_schedules:
+        row_dept = get_field_insensitive(
+            row, 
+            ["department", "programme", "dept", "branch", "course"]
+        )
+        row_sem = get_field_insensitive(
+            row, 
+            ["semester", "sem"]
+        )
+        
+        if row_dept.lower() == department.lower() and row_sem.lower() == semester.lower():
+            matched_by_filters.append(row)
 
-    return response.data
+    return matched_by_filters
 
 if __name__ == "__main__":
     import uvicorn
