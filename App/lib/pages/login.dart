@@ -1,4 +1,6 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import '../constants/design_system.dart'; // Handles your solar icons globally
 import '../models/user.dart';
 import '../services/auth_service.dart';
@@ -36,109 +38,68 @@ class _LoginScreenState extends State<LoginScreen> {
     final enteredPassword = _passwordController.text.trim(); // Acts as Date of Birth
 
     try {
-      // 💡 1. Query 'StudentDetails' matching the raw String roll number first (since Roll_No is text)
-      dynamic response = await Supabase.instance.client
-          .from('StudentDetails') 
-          .select()
-          .eq('Roll_No', rollNumber) 
-          .maybeSingle(); 
-
-      // 💡 2. Fallback: If no match found, try querying as parsed Integer (in case of int8 datatype)
-      if (response == null) {
-        final parsedRoll = int.tryParse(rollNumber);
-        if (parsedRoll != null) {
-          response = await Supabase.instance.client
-              .from('StudentDetails') 
-              .select()
-              .eq('Roll_No', parsedRoll)
-              .maybeSingle();
-        }
-      }
-
-      // 💡 3. Validate roll number existence
-      if (response == null) {
-        // Enhanced diagnostic tip for the developer
-        _showErrorSnackBar(
-          'No account found. If the record exists, verify that your Supabase Row Level Security (RLS) policy allows read/SELECT access.',
-          isLongDuration: true,
-        );
-        return;
-      }
-
-      // 💡 4. Validate Date of Birth match (representing the student password)
-      final String correctDoB = (response['dob'] ?? 
-                                 response['DOB'] ?? 
-                                 response['DoB'] ?? 
-                                 response['Date_of_Birth'] ?? 
-                                 '').toString().trim();
-                                 
-      // Normalize both inputs by removing hyphens, slashes, and spaces (e.g., "05-11-2006" -> "05112006")
-      final cleanEntered = enteredPassword.replaceAll(RegExp(r'[^0-9]'), '');
-      final cleanCorrect = correctDoB.replaceAll(RegExp(r'[^0-9]'), '');
-
-      if (cleanEntered != cleanCorrect && enteredPassword != correctDoB) {
-        _showErrorSnackBar('Incorrect Date of Birth. Please check and try again.');
-        return;
-      }
-
-      // 💡 5. Normalize the database keys to match what UserModel.fromMap expects
-      final normalizedResponse = {
-        'id': response['Roll_No']?.toString() ?? '',
-        'name': (response['Name'] ?? response['name'] ?? '').toString(),
-        'roll_number': (response['Roll_No'] ?? response['roll_number'] ?? '').toString(),
-        'email': (response['Email'] ?? response['email'])?.toString(),
-        'department': (response['Programme'] ?? response['department'])?.toString(),
-        'dob': correctDoB,
-        'Mobile_No': (response['Mobile_No'] ?? response['mobile_no'])?.toString(),
-        'Aadhaar': (response['Aadhaar'] ?? response['aadhaar'])?.toString(),
-        'enrollment_no': (response['Enrollment No'] ?? response['Enrollment_No'])?.toString(),
-        'apaar_id': (response['Apaar_ID'] ?? response['Apaar ID'])?.toString(),
-        'address': (response['Address'] ?? response['address'])?.toString(),
-        'category': (response['Category'] ?? response['category'])?.toString(),
-        'gender': (response['Gender'] ?? response['gender'])?.toString(),
-        'father_name': (response['Father_Name'] ?? response['father_name'])?.toString(),
-        'mother_name': (response['Mother_Name'] ?? response['mother_name'])?.toString(),
-        'semester': (response['Semester'] ?? response['semester'])?.toString(),
-      };
-
-      // Map normalized data safely into our clean model class
-      // 💡 5. Map explicitly using strict string key lookups directly into your UserModel constructor parameters
-      // This completely shields your parsing logic from R8/ProGuard obfuscation!
-      final user = UserModel(
-        id: response['Roll_No']?.toString() ?? '',
-        name: (response['Name'] ?? response['name'] ?? '').toString(),
-        rollNumber: (response['Roll_No'] ?? response['roll_number'] ?? '').toString(),
-        email: (response['Email'] ?? response['email'])?.toString() ?? '',
-        department: (response['Programme'] ?? response['department'])?.toString() ?? '',
-        dob: correctDoB,
-        mobileNo: (response['Mobile_No'] ?? response['mobile_no'])?.toString() ?? '',
-        aadhaar: (response['Aadhaar'] ?? response['aadhaar'])?.toString() ?? '',
-        enrollmentNo: (response['Enrollment No'] ?? response['Enrollment_No'])?.toString() ?? '',
-        apaarId: (response['Apaar_ID'] ?? response['Apaar ID'])?.toString() ?? '',
-        address: (response['Address'] ?? response['address'])?.toString() ?? '',
-        category: (response['Category'] ?? response['category'])?.toString() ?? '',
-        gender: (response['Gender'] ?? response['gender'])?.toString() ?? '',
-        fatherName: (response['Father_Name'] ?? response['father_name'])?.toString() ?? '',
-        motherName: (response['Mother_Name'] ?? response['mother_name'])?.toString() ?? '',
-        semester: (response['Semester'] ?? response['semester'])?.toString() ?? '',
+      // 💡 Secure 3-Tier Architecture Call: Routes credentials directly to your live Vercel Gateway
+      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/auth/login');
+      
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'roll_number': rollNumber,
+          'password': enteredPassword,
+        }),
       );
 
-      // 💡 6. Store user session persistently to disk
-      await AuthService.saveSession(user);
+      // Parse the incoming JSON infrastructure maps
+      final Map<String, dynamic> responseData = jsonDecode(response.body);
 
-      // 💡 7. Route user into main Dashboard and clear history stack
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const MyHomePage(title: 'EduPortal'),
-          ),
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> studentData = responseData['user'] ?? {};
+        final String jwtToken = responseData['access_token'] ?? '';
+
+        // 💡 Explicit compilation protection: Mapping response keys into clear properties blocks.
+        // This ensures your parsing sequence perfectly survives R8/ProGuard code shrinking minification!
+        final user = UserModel(
+          id: studentData['id']?.toString() ?? '',
+          name: studentData['name']?.toString() ?? '',
+          rollNumber: studentData['roll_number']?.toString() ?? '',
+          email: studentData['email']?.toString() ?? '',
+          department: studentData['department']?.toString() ?? '',
+          dob: studentData['dob']?.toString() ?? '',
+          mobileNo: studentData['Mobile_No']?.toString() ?? studentData['mobile_no']?.toString() ?? '',
+          aadhaar: studentData['Aadhaar']?.toString() ?? studentData['aadhaar']?.toString() ?? '',
+          enrollmentNo: studentData['enrollment_no']?.toString() ?? studentData['Enrollment_No']?.toString() ?? '',
+          apaarId: studentData['apaar_id']?.toString() ?? studentData['Apaar_ID']?.toString() ?? '',
+          address: studentData['address']?.toString() ?? '',
+          category: studentData['category']?.toString() ?? '',
+          gender: studentData['gender']?.toString() ?? '',
+          fatherName: studentData['father_name']?.toString() ?? studentData['Father_Name']?.toString() ?? '',
+          motherName: studentData['mother_name']?.toString() ?? studentData['Mother_Name']?.toString() ?? '',
+          semester: studentData['semester']?.toString() ?? '4',
         );
+
+        // 💡 Save user session persistently alongside the secure server-signed JWT token
+        // Ensure you update your AuthService signature if you choose to record the JWT on disk!
+        await AuthService.saveSession(user);
+
+        // Route user into main Dashboard and clear history stack
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const MyHomePage(title: 'EduPortal'),
+            ),
+          );
+        }
+      } else {
+        // Handle specific server-side errors returned by your FastAPI code (400, 401, 404, etc.)
+        final errorMessage = responseData['detail'] ?? 'Invalid authorization response.';
+        _showErrorSnackBar(errorMessage.toString());
       }
-    } on PostgrestException catch (e) {
-      _showErrorSnackBar('Database Connection Error: ${e.message}');
     } catch (e) {
-      _showErrorSnackBar('An unexpected error occurred during sign in.');
+      // Gracefully catch system connection faults, offline network errors, or failed handshakes
+      _showErrorSnackBar('Gateway Connection Error: Unable to communicate with authentication server.');
+      debugPrint('❌ Network Exceptions Details: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -264,8 +225,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       : ElevatedButton(
                           onPressed: _handleLogin,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                Theme.of(context).colorScheme.primary,
+                            backgroundColor: Theme.of(context).colorScheme.primary,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(

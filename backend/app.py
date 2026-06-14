@@ -1,7 +1,7 @@
 import os
 import json
 import httpx
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,9 +13,10 @@ app = FastAPI(
     description="Secure intermediate backend middleware safeguarding Supabase & Telegram infrastructure."
 )
 
+# 🌐 CORS Middleware Settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Tighten this to your live domain/IP deployment configurations later
+    allow_origins=["*"],  # Adjust this to restrict origins once you are ready for staging/production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -23,17 +24,30 @@ app.add_middleware(
 
 # 🔑 System Environment Configurations (Hidden completely from client APKs)
 SUPABASE_URL = "https://kvuvxoajuenszfdanoif.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt2dXZ4b2FqdWVuc3pmZGFub2lmIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTU2MjA5NiwiZXhwIjoyMDkxMTM4MDk2fQ.9v882ryLmBv-Laoe8b1WHxfGCwBHe1VY1ufmbId9xjI" # Grants secure administrative control bypass
+SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt2dXZ4b2FqdWVuc3pmZGFub2lmIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTU2MjA5NiwiZXhwIjoyMDkxMTM4MDk2fQ.9v882ryLmBv-Laoe8b1WHxfGCwBHe1VY1ufmbId9xjI"
 TELEGRAM_BOT_TOKEN = "7705422769:AAE9Litq4FezGMrTYRzHuyi8SYUMgcxckkI"
 TELEGRAM_CHAT_ID = "-1003952897986"
 
-# JWT Token Configuration Requirements
+# 🔒 JWT Token Configuration Requirements
 JWT_SECRET_KEY = "a54c18a537a0d7c621566004f2e4de37"
 JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 43200 # Tokens stay valid persistently for 30 Days
+ACCESS_TOKEN_EXPIRE_MINUTES = 43200  # Tokens stay valid persistently for 30 Days
 
 # Initialize Administrative Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+
+# 🛠️ HELPER UTILITY: Case-Insensitive Key Extractor
+def get_field_insensitive(data: Dict[str, Any], target_keys: List[str], default_val: str = "") -> str:
+    """
+    Looks up a dictionary value by matching keys case-insensitively 
+    and ignoring space/underscore variations.
+    """
+    for key, value in data.items():
+        normalized_db_key = key.lower().replace(" ", "_").strip()
+        if normalized_db_key in target_keys:
+            return str(value).strip() if value is not None else default_val
+    return default_val
 
 
 # 🛡️ SECURITY LAYER: TOKEN VERIFICATION UTILITIES
@@ -54,18 +68,22 @@ async def get_current_user(token: str) -> dict:
         roll_number: str = payload.get("sub")
         if roll_number is None:
             raise credentials_exception
-        return {"roll_number": roll_number, "name": payload.get("name"), "department": payload.get("dept")}
+        return {
+            "roll_number": roll_number, 
+            "name": payload.get("name"), 
+            "department": payload.get("dept")
+        }
     except JWTError:
         raise credentials_exception
 
 
 # -------------------------------------------------------------------------
-# 1. CENTRALIZED AUTHENTICATION CONTROLLER (Replaces local client parsing)
+# 1. CENTRALIZED AUTHENTICATION CONTROLLER (Robust Case-Insensitive Matching)
 # -------------------------------------------------------------------------
 @app.post("/api/auth/login")
 async def secure_login(payload: dict):
     roll_number = str(payload.get("roll_number", "")).strip()
-    entered_password = str(payload.get("password", "")).strip() # Represents Student Date of Birth
+    entered_password = str(payload.get("password", "")).strip()  # Represents Student Date of Birth
 
     if not roll_number or not entered_password:
         raise HTTPException(status_code=400, detail="Missing required input credentials fields.")
@@ -84,20 +102,38 @@ async def secure_login(payload: dict):
     if not student:
         raise HTTPException(status_code=404, detail="No matching student record workspace registered.")
 
-    # Normalize target password parameters across expected database table layout definitions
-    correct_dob = str(student.get("dob") or student.get("DOB") or student.get("Date_of_Birth") or "").strip()
-    
+    # 💡 FIX 1: Robust, Case-Insensitive key retrieval for Date of Birth field parameters
+    correct_dob = get_field_insensitive(
+        student, 
+        ["dob", "date_of_birth"], 
+        default_val=""
+    )
+
+    if not correct_dob:
+        raise HTTPException(status_code=500, detail="Date of Birth data schema column missing in database mapping.")
+
+    # 💡 FIX 2: Normalize both passwords by stripping non-numeric characters (hyphens, slashes, spaces)
     clean_entered = "".join(filter(str.isdigit, entered_password))
     clean_correct = "".join(filter(str.isdigit, correct_dob))
 
-    if clean_entered != clean_correct and entered_password != correct_dob:
+    # Support fallback to direct string comparison if digit cleaning yields empty outcomes
+    is_match = (clean_entered == clean_correct and clean_entered != "") or (entered_password == correct_dob)
+
+    if not is_match:
         raise HTTPException(status_code=401, detail="Invalid date of birth password parameters.")
+
+    # 💡 Case-Insensitive Extraction for User Properties Mapping
+    student_name = get_field_insensitive(student, ["name"], "Student")
+    student_roll = get_field_insensitive(student, ["roll_no", "roll_number", "roll_no."], roll_number)
+    student_email = get_field_insensitive(student, ["email"])
+    student_programme = get_field_insensitive(student, ["programme", "department", "dept", "branch"])
+    student_semester = get_field_insensitive(student, ["semester"], "4")
 
     # Issue Secure Server-Signed JWT Access Credentials back to the device layout environment
     token_data = {
-        "sub": str(student.get("Roll_No")),
-        "name": student.get("Name", "Student"),
-        "dept": student.get("Programme") or student.get("department")
+        "sub": student_roll,
+        "name": student_name,
+        "dept": student_programme
     }
     jwt_token = create_access_token(token_data)
 
@@ -105,13 +141,23 @@ async def secure_login(payload: dict):
         "access_token": jwt_token,
         "token_type": "bearer",
         "user": {
-            "id": str(student.get("Roll_No")),
-            "name": student.get("Name"),
-            "roll_number": str(student.get("Roll_No")),
-            "email": student.get("Email"),
-            "department": student.get("Programme") or student.get("department"),
-            "semester": student.get("Semester", "4"),
-            "dob": correct_dob
+            "id": student_roll,
+            "name": student_name,
+            "roll_number": student_roll,
+            "email": student_email,
+            "department": student_programme,
+            "semester": student_semester,
+            "dob": correct_dob,
+            # Additional optional metrics for dynamic user mapping details
+            "Mobile_No": get_field_insensitive(student, ["mobile_no", "mobile", "phone"]),
+            "Aadhaar": get_field_insensitive(student, ["aadhaar", "aadhaar_no"]),
+            "enrollment_no": get_field_insensitive(student, ["enrollment_no", "enrollment"]),
+            "apaar_id": get_field_insensitive(student, ["apaar_id", "apaar"]),
+            "address": get_field_insensitive(student, ["address"]),
+            "category": get_field_insensitive(student, ["category"]),
+            "gender": get_field_insensitive(student, ["gender"]),
+            "father_name": get_field_insensitive(student, ["father_name", "father"]),
+            "mother_name": get_field_insensitive(student, ["mother_name", "mother"]),
         }
     }
 
