@@ -22,13 +22,13 @@ app.add_middleware(
 )
 
 # 🔑 System Environment Configurations (Hidden completely from client APKs)
-SUPABASE_URL = "https://your-supabase-project.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY = "YOUR_SUPABASE_SERVICE_ROLE_KEY" # Grants secure administrative control bypass
+SUPABASE_URL = "https://kvuvxoajuenszfdanoif.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt2dXZ4b2FqdWVuc3pmZGFub2lmIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTU2MjA5NiwiZXhwIjoyMDkxMTM4MDk2fQ.9v882ryLmBv-Laoe8b1WHxfGCwBHe1VY1ufmbId9xjI" # Grants secure administrative control bypass
 TELEGRAM_BOT_TOKEN = "7705422769:AAE9Litq4FezGMrTYRzHuyi8SYUMgcxckkI"
 TELEGRAM_CHAT_ID = "-1003952897986"
 
 # JWT Token Configuration Requirements
-JWT_SECRET_KEY = "SUPER_SECRET_COMPLEX_RANDOM_STRING_FOR_EDUPORTAL_BACKEND"
+JWT_SECRET_KEY = "a54c18a537a0d7c621566004f2e4de37"
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 43200 # Tokens stay valid persistently for 30 Days
 
