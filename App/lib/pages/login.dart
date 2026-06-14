@@ -53,7 +53,7 @@ class _LoginScreenState extends State<LoginScreen> {
         }),
       );
 
-      // 💡 FIXED: Check status code FIRST before attempting to decode response.body as JSON.
+      // 💡 Check status code FIRST before attempting to decode response.body as JSON.
       // This prevents a FormatException crash when the server returns plain text / HTML (like "Internal Server Error") on failure.
       if (response.statusCode == 200) {
         final Map<String, dynamic> responseData = jsonDecode(response.body);
@@ -94,7 +94,7 @@ class _LoginScreenState extends State<LoginScreen> {
           );
         }
       } else {
-        // 💡 FIXED: Safely handle non-200 responses without crashing on plain-text errors
+        // 💡 Safely handle non-200 responses without crashing on plain-text errors
         String errorMessage = 'Server Error (${response.statusCode})';
         try {
           final Map<String, dynamic> responseData = jsonDecode(response.body);

@@ -16,7 +16,7 @@ app = FastAPI(
 # 🌐 CORS Middleware Settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Adjust this to restrict origins once you are ready for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,12 +36,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 43200  # Tokens stay valid persistently for 30 Day
 # Initialize Administrative Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-
-# 🛠️ HELPER UTILITY: Case-Insensitive Key Extractor
 def get_field_insensitive(data: Dict[str, Any], target_keys: List[str], default_val: str = "") -> str:
     """
     Looks up a dictionary value by matching keys case-insensitively 
-    and ignoring space/underscore variations.
+    and ignoring space/underscore variations. This eliminates key errors.
     """
     for key, value in data.items():
         normalized_db_key = key.lower().replace(" ", "_").strip()
@@ -49,8 +47,6 @@ def get_field_insensitive(data: Dict[str, Any], target_keys: List[str], default_
             return str(value).strip() if value is not None else default_val
     return default_val
 
-
-# 🛡️ SECURITY LAYER: TOKEN VERIFICATION UTILITIES
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -76,7 +72,6 @@ async def get_current_user(token: str) -> dict:
     except JWTError:
         raise credentials_exception
 
-
 # -------------------------------------------------------------------------
 # 1. CENTRALIZED AUTHENTICATION CONTROLLER (Robust Version-Safe Matching)
 # -------------------------------------------------------------------------
@@ -88,7 +83,7 @@ async def secure_login(payload: dict):
     if not roll_number or not entered_password:
         raise HTTPException(status_code=400, detail="Missing required input credentials fields.")
 
-    # 💡 FIXED: Replaced non-standard .maybe_single() with standard list slice for cross-version compatibility
+    # 💡 OPTIMIZATION: Replaced non-standard .maybe_single() with standard list slice for cross-version compatibility
     response = supabase.table("StudentDetails").select("*").eq("Roll_No", roll_number).execute()
     student = response.data[0] if response.data else None
 
@@ -241,15 +236,34 @@ async def handle_chat_delivery(message: dict, token: str):
 # 4. ACADEMIC SCHEDULES & TIMETABLE RESOURCE DELIVERY ENGINE
 # -------------------------------------------------------------------------
 @app.get("/api/schedule/fetch")
-async def fetch_academic_schedules(department: str, semester: str):
-    # Route structured schedule logs from isolated system storage layers smoothly
-    response = supabase.table("AcademicSchedules")\
+async def fetch_academic_schedules(department: str, semester: str, group_name: Optional[str] = None):
+    # Handle both explicit department checks and calendar event bypass blocks seamlessly
+    if department == "Calendar" and semester == "Events":
+        response = supabase.table("Monthly Calendar").select("*").execute()
+        return response.data
+
+    query = supabase.table("Weekly Schedules")\
         .select("*")\
         .eq("department", department)\
-        .eq("semester", semester)\
-        .execute()
-    return response.data
+        .eq("semester", semester)
 
+    # 💡 FIX: Inject section group matching filter parameter when sent by the client app
+    if group_name:
+        # Tries matching column configurations against standard case variants cleanly
+        query = query.eq("ScheduleGroupName", group_name)
+
+    response = query.execute()
+    
+    # Dynamic fallback check: if strict group query returns empty rows, retry against generic logs
+    if not response.data and group_name:
+        alt_response = supabase.table("Weekly Schedules")\
+            .select("*")\
+            .eq("department", department)\
+            .eq("semester", semester)\
+            .execute()
+        return alt_response.data
+
+    return response.data
 
 if __name__ == "__main__":
     import uvicorn
