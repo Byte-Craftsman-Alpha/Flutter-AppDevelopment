@@ -36,7 +36,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 43200  # Tokens stay valid persistently for 30 Day
 # Initialize Administrative Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-def get_field_insensitive(data: Dict[str, Any], target_keys: List[String], default_val: str = "") -> str:
+# 💡 FIXED: Changed List[String] to List[str] to prevent Python compilation / startup NameErrors on Vercel
+def get_field_insensitive(data: Dict[str, Any], target_keys: List[str], default_val: str = "") -> str:
     """
     Looks up a dictionary value by matching keys case-insensitively 
     and ignoring space/underscore variations. This eliminates key errors.
