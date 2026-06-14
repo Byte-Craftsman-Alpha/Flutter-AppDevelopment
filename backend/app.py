@@ -16,7 +16,7 @@ app = FastAPI(
 # 🌐 CORS Middleware Settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust this to restrict origins once you are ready for staging/production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -78,7 +78,7 @@ async def get_current_user(token: str) -> dict:
 
 
 # -------------------------------------------------------------------------
-# 1. CENTRALIZED AUTHENTICATION CONTROLLER (Robust Case-Insensitive Matching)
+# 1. CENTRALIZED AUTHENTICATION CONTROLLER (Robust Version-Safe Matching)
 # -------------------------------------------------------------------------
 @app.post("/api/auth/login")
 async def secure_login(payload: dict):
@@ -88,21 +88,21 @@ async def secure_login(payload: dict):
     if not roll_number or not entered_password:
         raise HTTPException(status_code=400, detail="Missing required input credentials fields.")
 
-    # Query administrative layer using raw SQL structure logic to find matching record indexes
-    response = supabase.table("StudentDetails").select("*").eq("Roll_No", roll_number).maybe_single().execute()
-    student = response.data
+    # 💡 FIXED: Replaced non-standard .maybe_single() with standard list slice for cross-version compatibility
+    response = supabase.table("StudentDetails").select("*").eq("Roll_No", roll_number).execute()
+    student = response.data[0] if response.data else None
 
     if not student:
         # Secondary fallback lookup mapping parameter parsing patterns
         parsed_roll = int(roll_number) if roll_number.isdigit() else None
         if parsed_roll:
-            response = supabase.table("StudentDetails").select("*").eq("Roll_No", parsed_roll).maybe_single().execute()
-            student = response.data
+            response = supabase.table("StudentDetails").select("*").eq("Roll_No", parsed_roll).execute()
+            student = response.data[0] if response.data else None
 
     if not student:
         raise HTTPException(status_code=404, detail="No matching student record workspace registered.")
 
-    # 💡 FIX 1: Robust, Case-Insensitive key retrieval for Date of Birth field parameters
+    # 💡 Robust, Case-Insensitive key retrieval for Date of Birth field parameters
     correct_dob = get_field_insensitive(
         student, 
         ["dob", "date_of_birth"], 
@@ -112,7 +112,7 @@ async def secure_login(payload: dict):
     if not correct_dob:
         raise HTTPException(status_code=500, detail="Date of Birth data schema column missing in database mapping.")
 
-    # 💡 FIX 2: Normalize both passwords by stripping non-numeric characters (hyphens, slashes, spaces)
+    # 💡 Normalize both passwords by stripping non-numeric characters (hyphens, slashes, spaces)
     clean_entered = "".join(filter(str.isdigit, entered_password))
     clean_correct = "".join(filter(str.isdigit, correct_dob))
 

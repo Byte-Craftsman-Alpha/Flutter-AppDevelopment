@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import '../constants/design_system.dart'; // Handles your solar icons globally
+import 'package:flutty_solar_icons/flutty_solar_icons.dart';
+import '../constants/theme.dart'; // Mapped strictly to your centralized design system
 import '../models/user.dart';
 import '../services/auth_service.dart';
 import 'home.dart'; // Ensure correct import to your dashboard page class
@@ -28,6 +29,8 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _handleLogin() async {
+    // 💡 Run form validation check OUTSIDE the try-catch block.
+    // This prevents layout/theme-rendering crashes from getting caught and reported as server connection errors.
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {
@@ -50,10 +53,10 @@ class _LoginScreenState extends State<LoginScreen> {
         }),
       );
 
-      // Parse the incoming JSON infrastructure maps
-      final Map<String, dynamic> responseData = jsonDecode(response.body);
-
+      // 💡 FIXED: Check status code FIRST before attempting to decode response.body as JSON.
+      // This prevents a FormatException crash when the server returns plain text / HTML (like "Internal Server Error") on failure.
       if (response.statusCode == 200) {
+        final Map<String, dynamic> responseData = jsonDecode(response.body);
         final Map<String, dynamic> studentData = responseData['user'] ?? {};
         final String jwtToken = responseData['access_token'] ?? '';
 
@@ -79,8 +82,7 @@ class _LoginScreenState extends State<LoginScreen> {
         );
 
         // 💡 Save user session persistently alongside the secure server-signed JWT token
-        // Ensure you update your AuthService signature if you choose to record the JWT on disk!
-        await AuthService.saveSession(user);
+        await AuthService.saveSession(user, token: jwtToken);
 
         // Route user into main Dashboard and clear history stack
         if (mounted) {
@@ -92,13 +94,23 @@ class _LoginScreenState extends State<LoginScreen> {
           );
         }
       } else {
-        // Handle specific server-side errors returned by your FastAPI code (400, 401, 404, etc.)
-        final errorMessage = responseData['detail'] ?? 'Invalid authorization response.';
-        _showErrorSnackBar(errorMessage.toString());
+        // 💡 FIXED: Safely handle non-200 responses without crashing on plain-text errors
+        String errorMessage = 'Server Error (${response.statusCode})';
+        try {
+          final Map<String, dynamic> responseData = jsonDecode(response.body);
+          errorMessage = responseData['detail']?.toString() ?? 
+                         responseData['message']?.toString() ?? 
+                         errorMessage;
+        } catch (_) {
+          // If response is plain text like "Internal Server Error", extract it safely here
+          if (response.body.isNotEmpty) {
+            errorMessage = response.body.trim();
+          }
+        }
+        _showErrorSnackBar(errorMessage);
       }
     } catch (e) {
-      // Gracefully catch system connection faults, offline network errors, or failed handshakes
-      _showErrorSnackBar('Gateway Connection Error: Unable to communicate with authentication server.');
+      _showErrorSnackBar('Gateway Connection Error: Unable to communicate with authentication server.\nDetails: $e');
       debugPrint('❌ Network Exceptions Details: $e');
     } finally {
       if (mounted) {
@@ -111,137 +123,196 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _showErrorSnackBar(String message, {bool isLongDuration = false}) {
     if (!mounted) return;
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.redAccent,
+        content: Row(
+          children: [
+            EduComponents.icon(
+              context: context, 
+              iconData: EduIcons.danger, 
+              color: systemExt.btnDangerText, 
+              size: 20
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                message, 
+                style: TextStyle(fontWeight: FontWeight.bold, color: systemExt.btnDangerText, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: systemExt.btnDangerBg,
         duration: Duration(seconds: isLongDuration ? 6 : 3),
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+          side: BorderSide(color: systemExt.btnDangerBorder),
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+    final theme = Theme.of(context);
+    final textTheme = theme.textTheme;
+
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    'Welcome Back',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF0F172A),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Sign in to your EduPortal account',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-                  ),
-                  const SizedBox(height: 36),
-
-                  TextFormField(
-                    controller: _rollController,
-                    keyboardType: TextInputType.number, // Prompt numeric keypad for numeric roll numbers
-                    enabled: !_isLoading, // Block typing while querying
-                    decoration: InputDecoration(
-                      labelText: 'Roll Number',
-                      hintText: 'e.g., 2514670010038',
-                      prefixIcon: Padding(
-                        padding: const EdgeInsets.all(12.0),
-                        child: SolarIcon(SolarIcons.User, size: 20),
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Please enter your roll number';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 18),
-
-                  TextFormField(
-                    controller: _passwordController,
-                    obscureText: _isPasswordObscured,
-                    enabled: !_isLoading,
-                    keyboardType: TextInputType.text,
-                    decoration: InputDecoration(
-                      labelText: 'Password (Date of Birth)',
-                      hintText: 'DD-MM-YYYY', // Helpful instruction for students
-                      prefixIcon: Padding(
-                        padding: const EdgeInsets.all(12.0),
-                        child: SolarIcon(SolarIcons.Lock, size: 20),
-                      ),
-                      suffixIcon: IconButton(
-                        onPressed: () {
-                          setState(() {
-                            _isPasswordObscured = !_isPasswordObscured;
-                          });
-                        },
-                        icon: SolarIcon(
-                          _isPasswordObscured
-                              ? SolarIcons.EyeClosed
-                              : SolarIcons.Eye,
-                          size: 20,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: systemExt.pageBackground,
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Brand Identity Animated Logo placeholder 
+                    Center(
+                      child: Container(
+                        width: 64,
+                        height: 64,
+                        margin: const EdgeInsets.only(bottom: 24),
+                        decoration: BoxDecoration(
+                          gradient: systemExt.primaryGradient,
+                          borderRadius: BorderRadius.circular(EduDesignTokens.radius3xl),
+                          boxShadow: systemExt.avatarShadow,
+                        ),
+                        child: EduComponents.icon(
+                          context: context,
+                          iconData: const SolarIcon(SolarIcons.Widget, weight: SolarIconWeight.bold),
+                          color: Colors.white,
+                          size: 32,
                         ),
                       ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
+                    ),
+                    Text(
+                      'Welcome Back',
+                      textAlign: TextAlign.center,
+                      style: textTheme.titleLarge?.copyWith(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter your Date of Birth as password';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 30),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Sign in to your EduPortal account',
+                      textAlign: TextAlign.center,
+                      style: textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 36),
 
-                  _isLoading
-                      ? const Center(
-                          child: Padding(
-                            padding: EdgeInsets.symmetric(vertical: 12.0),
-                            child: CircularProgressIndicator(),
-                          ),
-                        )
-                      : ElevatedButton(
-                          onPressed: _handleLogin,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Theme.of(context).colorScheme.primary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                    // Premium auth credentials card wrapper 
+                    EduComponents.card(
+                      context: context,
+                      child: Padding(
+                        padding: const EdgeInsets.all(24.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            TextFormField(
+                              controller: _rollController,
+                              keyboardType: TextInputType.number, // Prompt numeric keypad for numeric roll numbers
+                              enabled: !_isLoading, // Block typing while querying
+                              style: textTheme.bodyLarge?.copyWith(fontSize: 14),
+                              decoration: InputDecoration(
+                                labelText: 'Roll Number',
+                                hintText: 'e.g., 2514670010038',
+                                prefixIcon: Padding(
+                                  padding: const EdgeInsets.all(12.0),
+                                  child: EduComponents.icon(
+                                    context: context,
+                                    iconData: const SolarIcon(SolarIcons.User, weight: SolarIconWeight.outline),
+                                    size: 20,
+                                    color: EduDesignTokens.slate400,
+                                  ),
+                                ),
+                              ),
+                              validator: (value) {
+                                if (value == null || value.trim().isEmpty) {
+                                  return 'Please enter your roll number';
+                                }
+                                return null;
+                              },
                             ),
-                            elevation: 0,
-                          ),
-                          child: const Text(
-                            'Sign In',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
+                            const SizedBox(height: 20),
+                            TextFormField(
+                              controller: _passwordController,
+                              obscureText: _isPasswordObscured,
+                              enabled: !_isLoading,
+                              keyboardType: TextInputType.text,
+                              style: textTheme.bodyLarge?.copyWith(fontSize: 14),
+                              decoration: InputDecoration(
+                                labelText: 'Password (Date of Birth)',
+                                hintText: 'DD-MM-YYYY', // Helpful instruction for students
+                                prefixIcon: Padding(
+                                  padding: const EdgeInsets.all(12.0),
+                                  child: EduComponents.icon(
+                                    context: context,
+                                    iconData: const SolarIcon(SolarIcons.Lock, weight: SolarIconWeight.outline),
+                                    size: 20,
+                                    color: EduDesignTokens.slate400,
+                                  ),
+                                ),
+                                suffixIcon: IconButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      _isPasswordObscured = !_isPasswordObscured;
+                                    });
+                                  },
+                                  icon: EduComponents.icon(
+                                    context: context,
+                                    iconData: _isPasswordObscured
+                                        ? const SolarIcon(SolarIcons.EyeClosed, weight: SolarIconWeight.outline)
+                                        : const SolarIcon(SolarIcons.Eye, weight: SolarIconWeight.outline),
+                                    size: 20,
+                                    color: EduDesignTokens.slate400,
+                                  ),
+                                ),
+                              ),
+                              validator: (value) {
+                                if (value == null || value.isEmpty) {
+                                  return 'Please enter your Date of Birth as password';
+                                }
+                                return null;
+                              },
                             ),
-                          ),
+                          ],
                         ),
-                ],
+                      ),
+                    ),
+                    const SizedBox(height: 30),
+
+                    _isLoading
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 12.0),
+                              child: CircularProgressIndicator(color: theme.primaryColor),
+                            ),
+                          )
+                        : EduComponents.primaryGradientButton(
+                            context: context,
+                            onPressed: _handleLogin,
+                            child: const Text(
+                              'Sign In',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                  ],
+                ),
               ),
             ),
           ),
