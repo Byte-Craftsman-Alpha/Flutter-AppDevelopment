@@ -279,6 +279,24 @@ async def fetch_academic_schedules(department: str, semester: str, group_name: O
 
     return matched_by_filters
 
+@app.get("/api/directory/staff")
+async def fetch_staff_directory(token: str):
+    user = await get_current_user(token) # Ensure authenticated
+    try:
+        response = supabase.table("staff_directory").select("*").execute()
+        return response.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/library/books")
+async def fetch_library_books(token: str):
+    user = await get_current_user(token) # Ensure authenticated
+    try:
+        response = supabase.table("library_books").select("*").execute()
+        return response.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
