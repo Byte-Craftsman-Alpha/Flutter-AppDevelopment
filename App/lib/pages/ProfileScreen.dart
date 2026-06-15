@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:flutty_solar_icons/flutty_solar_icons.dart';
 import '../services/auth_service.dart';
 import '../constants/theme.dart'; // Mapped strictly to your centralized design system
 import 'login.dart'; // Import your login screen file path

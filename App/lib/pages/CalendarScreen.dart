@@ -3,7 +3,6 @@ import 'package:flutter/foundation.dart'; // Required for compute() background t
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutty_solar_icons/flutty_solar_icons.dart';
 import '../services/auth_service.dart';
 import '../constants/theme.dart';
 
@@ -55,14 +54,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   Future<void> _loadInitialSubscriptionAndData() async {
     final sub = await AuthService.getSubscribedSchedule();
+    // 💡 FIXED: Strictly convert empty strings to null to ensure proper state resets
+    final validSub = (sub != null && sub.isNotEmpty) ? sub : null;
+    
     if (mounted) {
       setState(() {
-        _currentSubscription = sub;
+        _currentSubscription = validSub;
       });
     }
-    if (sub != null) {
-      _initializeScheduleAndCalendar(sub);
-    }
+    _initializeScheduleAndCalendar(validSub);
   }
 
   String _formatDateToKey(DateTime date) {
@@ -91,16 +91,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   Future<void> _checkAndResetFocus() async {
     _resetToToday();
-    final latestSub = await AuthService.getSubscribedSchedule();
+    final sub = await AuthService.getSubscribedSchedule();
+    final latestSub = (sub != null && sub.isNotEmpty) ? sub : null;
+    
     if (latestSub != _currentSubscription) {
       if (mounted) {
         setState(() {
           _currentSubscription = latestSub;
         });
       }
-      if (latestSub != null) {
-        _initializeScheduleAndCalendar(latestSub);
-      }
+      _initializeScheduleAndCalendar(latestSub);
     }
   }
 
@@ -129,19 +129,29 @@ class _CalendarScreenState extends State<CalendarScreen> {
     return compute(_isolateJsonDecodeList, jsonStr); // 💡 Offloaded
   }
 
-  Future<void> _initializeScheduleAndCalendar(String groupName) async {
+  Future<void> _initializeScheduleAndCalendar(String? groupName) async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
 
-    final cachedClasses = await _loadScheduleFromCache(groupName);
+    // 💡 FIXED: Instantly wipe any lingering classes from memory to guarantee ghost caches never display
+    _distributeClasses([]);
+
+    List<Map<String, dynamic>>? cachedClasses;
+    if (groupName != null) {
+      cachedClasses = await _loadScheduleFromCache(groupName);
+    }
+    
     final cachedCalendar = await _loadMonthlyCalendarFromCache();
 
     if (cachedClasses != null) _distributeClasses(cachedClasses);
     if (cachedCalendar != null) _indexMonthlyEvents(cachedCalendar);
 
-    if (cachedClasses != null || cachedCalendar != null) {
+    // Stop loading if we have the caches we require
+    final bool hasNeededCache = (groupName == null || cachedClasses != null) && (cachedCalendar != null);
+    
+    if (hasNeededCache) {
       if (mounted) setState(() { _isLoading = false; });
       _syncAllLiveRecords(groupName, isSilentBackgroundSync: true);
     } else {
@@ -188,7 +198,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   Future<void> _syncAllLiveRecords(
-    String groupName, {
+    String? groupName, {
     bool isSilentBackgroundSync = false,
     bool isManualRefresh = false,
   }) async {
@@ -204,36 +214,45 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final String semester = user?.semester ?? '4';
     final String? token = await AuthService.getAuthToken();
 
-    try {
-      final url = Uri.parse(
-        'https://flutter-app-development-mu.vercel.app/api/schedule/fetch'
-        '?department=${Uri.encodeComponent(dept)}'
-        '&semester=${Uri.encodeComponent(semester)}'
-        '&group_name=${Uri.encodeComponent(groupName)}'
-      );
+    // Sync Weekly Classes ONLY if the user is actively subscribed
+    if (groupName != null && groupName.isNotEmpty) {
+      try {
+        final url = Uri.parse(
+          'https://flutter-app-development-mu.vercel.app/api/schedule/fetch'
+          '?department=${Uri.encodeComponent(dept)}'
+          '&semester=${Uri.encodeComponent(semester)}'
+          '&group_name=${Uri.encodeComponent(groupName)}'
+        );
 
-      final response = await http.get(url, headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $token',
-      });
+        final response = await http.get(url, headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        });
 
-      if (response.statusCode == 200) {
-        final List<Map<String, dynamic>> responseData = await compute(_isolateJsonDecodeList, response.body);
-        if (responseData.isNotEmpty) {
-          // 💡 UPGRADED: Explicit parameter tracking checks to match dynamic server collection limits
-          final scheduleRecord = responseData.first;
-          final List<dynamic> rawClassesList = scheduleRecord['ScheduleLists'] ?? scheduleRecord['schedule_lists'] ?? [];
-          final List<Map<String, dynamic>> typedList = rawClassesList.map((e) => Map<String, dynamic>.from(e)).toList();
+        if (response.statusCode == 200) {
+          final List<Map<String, dynamic>> responseData = await compute(_isolateJsonDecodeList, response.body);
+          if (responseData.isNotEmpty) {
+            final scheduleRecord = responseData.first;
+            final List<dynamic> rawClassesList = scheduleRecord['ScheduleLists'] ?? scheduleRecord['schedule_lists'] ?? [];
+            final List<Map<String, dynamic>> typedList = rawClassesList.map((e) => Map<String, dynamic>.from(e)).toList();
 
-          await _saveScheduleToCache(groupName, typedList);
-          _distributeClasses(typedList);
-          weeklySuccess = true;
+            await _saveScheduleToCache(groupName, typedList);
+            _distributeClasses(typedList);
+            weeklySuccess = true;
+          } else {
+            _distributeClasses([]); 
+            weeklySuccess = true;
+          }
         }
+      } catch (e) {
+        debugPrint("⚠️ Live schedule sync failed: $e");
       }
-    } catch (e) {
-      debugPrint("⚠️ Live schedule sync failed: $e");
+    } else {
+      // Flag as successful if we actively verified the user is Unassigned
+      weeklySuccess = true;
     }
 
+    // Sync Monthly Calendar Events regardless of group subscription
     try {
       final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/schedule/fetch?department=Calendar&semester=Events');
       final response = await http.get(url, headers: {
@@ -518,11 +537,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
             color: Theme.of(context).primaryColor,
             onRefresh: () async {
               _resetToToday();
-              final latestSub = await AuthService.getSubscribedSchedule();
-              if (latestSub != null) {
-                if (mounted) { setState(() { _currentSubscription = latestSub; }); }
-                await _syncAllLiveRecords(latestSub, isManualRefresh: true);
-              }
+              final sub = await AuthService.getSubscribedSchedule();
+              final validSub = (sub != null && sub.isNotEmpty) ? sub : null;
+              if (mounted) { setState(() { _currentSubscription = validSub; }); }
+              await _syncAllLiveRecords(validSub, isManualRefresh: true);
             },
             child: CustomScrollView(
               physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
@@ -537,23 +555,45 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     ]),
                   ),
                 ),
+                
+                // 💡 UI SPLIT: Isolated the Weekly Schedule from the Monthly Calendar
+                // This ensures the placeholder takes over ONLY the weekly timeline part
                 if (_currentSubscription == null)
-                  SliverFillRemaining(hasScrollBody: false, child: _buildNoSubscriptionPlaceholder())
-                else if (_isLoading)
-                  const SliverFillRemaining(hasScrollBody: false, child: Center(child: CircularProgressIndicator()))
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 24.0),
+                      child: _buildNoSubscriptionPlaceholder(),
+                    ),
+                  )
+                else if (_isLoading && _dailyClasses.values.every((list) => list.isEmpty))
+                  const SliverToBoxAdapter(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 40.0),
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  )
                 else if (_errorMessage != null)
-                  SliverFillRemaining(hasScrollBody: false, child: _buildErrorPlaceholder())
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 24.0),
+                      child: _buildErrorPlaceholder(),
+                    ),
+                  )
                 else
-                  SliverPadding(
-                    padding: const EdgeInsets.only(bottom: 24.0),
-                    sliver: SliverList(
-                      delegate: SliverChildListDelegate([
-                        RepaintBoundary(child: _buildInteractiveScheduleCard()),
-                        const SizedBox(height: 12),
-                        RepaintBoundary(child: _buildMonthGridCalendarCard()),
-                      ]),
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 24.0),
+                      child: RepaintBoundary(child: _buildInteractiveScheduleCard()),
                     ),
                   ),
+
+                // 💡 INDEPENDENT: Monthly Calendar always renders below regardless of subscription!
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 24.0),
+                    child: RepaintBoundary(child: _buildMonthGridCalendarCard()),
+                  ),
+                ),
               ],
             ),
           ),
@@ -690,29 +730,47 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   Widget _buildNoSubscriptionPlaceholder() {
     final textTheme = Theme.of(context).textTheme;
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: EduDesignTokens.indigo50.withOpacity(0.15), shape: BoxShape.circle), child: EduComponents.icon(context: context, iconData: EduIcons.attendanceInactive, color: Theme.of(context).primaryColor, size: 40)),
-        const SizedBox(height: 20),
-        Text('No Section Subscribed', textAlign: TextAlign.center, style: textTheme.titleMedium),
-        const SizedBox(height: 8),
-        Padding(padding: const EdgeInsets.symmetric(horizontal: 32), child: Text("Please go to Profile tab and choose your weekly schedule block to load your class routine.", textAlign: TextAlign.center, style: textTheme.bodyMedium?.copyWith(height: 1.4))),
-      ],
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: EduComponents.card(
+        context: context,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 48.0, horizontal: 24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: EduDesignTokens.indigo50.withOpacity(0.15), shape: BoxShape.circle), child: EduComponents.icon(context: context, iconData: EduIcons.attendanceInactive, color: Theme.of(context).primaryColor, size: 40)),
+              const SizedBox(height: 20),
+              Text('No Section Subscribed', textAlign: TextAlign.center, style: textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Text("Please go to Profile tab and choose your weekly schedule block to load your class routine.", textAlign: TextAlign.center, style: textTheme.bodyMedium?.copyWith(height: 1.4)),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
   Widget _buildErrorPlaceholder() {
     final textTheme = Theme.of(context).textTheme;
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: EduDesignTokens.rose100.withOpacity(0.15), shape: BoxShape.circle), child: EduComponents.icon(context: context, iconData: EduIcons.danger, color: EduDesignTokens.rose700, size: 40)),
-        const SizedBox(height: 20),
-        Text('Connection Required', textAlign: TextAlign.center, style: textTheme.titleMedium),
-        const SizedBox(height: 8),
-        Padding(padding: const EdgeInsets.symmetric(horizontal: 32), child: Text(_errorMessage!, textAlign: TextAlign.center, style: textTheme.bodyMedium?.copyWith(height: 1.4))),
-      ],
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: EduComponents.card(
+        context: context,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 48.0, horizontal: 24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: EduDesignTokens.rose100.withOpacity(0.15), shape: BoxShape.circle), child: EduComponents.icon(context: context, iconData: EduIcons.danger, color: EduDesignTokens.rose700, size: 40)),
+              const SizedBox(height: 20),
+              Text('Connection Required', textAlign: TextAlign.center, style: textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Text(_errorMessage!, textAlign: TextAlign.center, style: textTheme.bodyMedium?.copyWith(height: 1.4)),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
