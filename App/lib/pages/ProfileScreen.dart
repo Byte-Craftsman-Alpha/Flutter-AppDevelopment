@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutty_solar_icons/flutty_solar_icons.dart';
+import 'package:package_info_plus/package_info_plus.dart'; // Added package info
 import '../services/auth_service.dart';
 import '../constants/theme.dart'; // Mapped strictly to your centralized design system
 import 'login.dart'; // Import your login screen file path
@@ -19,12 +21,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // 💡 Local state cache to hold freshly synced backend data without breaking AuthService structures
   Map<String, dynamic>? _liveUserData;
 
+  // 💡 App Version State Variables
+  String _appName = 'EduPortal';
+  String _appVersion = '';
+  String _appPackage = '';
+
   @override
   void initState() {
     super.initState();
     // Initialize with existing local auth data first
     _liveUserData = AuthService.currentUser?.toMap();
     _loadSchedulePreferences();
+    _loadAppDetails(); // Fetch package info asynchronously
+  }
+
+  // 💡 Fetch App Package Information
+  Future<void> _loadAppDetails() async {
+    try {
+      PackageInfo packageInfo = await PackageInfo.fromPlatform();
+      if (mounted) {
+        setState(() {
+          _appName = packageInfo.appName;
+          _appVersion = '${packageInfo.version} (Build ${packageInfo.buildNumber})';
+          _appPackage = packageInfo.packageName;
+        });
+      }
+    } catch (e) {
+      debugPrint("❌ Failed to load app info: $e");
+    }
   }
 
   // 💡 Fetch available options from Supabase and current preference from local disk
@@ -168,7 +192,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final fallbackMap = user?.toMap() ?? {};
     
     // 💡 BULLETPROOF MAPPING: Applies exhaustive PascalCase fallbacks AND strict .toString() casting
-    // This entirely prevents the grey screen crash caused by Supabase returning ints/bigints or mis-cased columns.
     final String displayedName = (_liveUserData?['name'] ?? _liveUserData?['Name'] ?? fallbackMap['name'] ?? 'Student').toString();
     final String displayedRoll = (_liveUserData?['roll_no'] ?? _liveUserData?['Roll_No'] ?? fallbackMap['rollNumber'] ?? 'N/A').toString();
     final String displayedEmail = (_liveUserData?['email'] ?? _liveUserData?['Email'] ?? fallbackMap['email'] ?? 'Not Provided').toString();
@@ -177,7 +200,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final String displayedMobile = (_liveUserData?['mobile_no'] ?? _liveUserData?['Mobile_No'] ?? _liveUserData?['mobile'] ?? fallbackMap['mobileNo'] ?? 'N/A').toString();
     final String displayedAadhaar = (_liveUserData?['aadhaar'] ?? _liveUserData?['Aadhaar'] ?? _liveUserData?['aadhaar_no'] ?? fallbackMap['aadhaar'] ?? 'N/A').toString();
 
-    // 💡 FIXED: Extended the robust parsing to the Additional Details to stop the Refresh Grey Screen Crash
+    // 💡 Extended robust parsing for Additional Details
     final String displayedEnrollment = (_liveUserData?['enrollment_no'] ?? _liveUserData?['Enrollment_No'] ?? fallbackMap['enrollmentNo'] ?? 'N/A').toString();
     final String displayedFather = (_liveUserData?['father_name'] ?? _liveUserData?['Father_Name'] ?? fallbackMap['fatherName'] ?? 'N/A').toString();
     final String displayedMother = (_liveUserData?['mother_name'] ?? _liveUserData?['Mother_Name'] ?? fallbackMap['motherName'] ?? 'N/A').toString();
@@ -423,7 +446,48 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 32),
+
+                    // --- 💡 App Version Information Block ---
+                    Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          EduComponents.icon(
+                            context: context,
+                            iconData: const SolarIcon(SolarIcons.CodeSquare, weight: SolarIconWeight.outline),
+                            size: 24,
+                            color: EduDesignTokens.slate300,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _appName,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: EduDesignTokens.slate400,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _appVersion.isNotEmpty ? 'Version $_appVersion' : 'Loading version...',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: EduDesignTokens.slate400.withOpacity(0.8),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _appPackage,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: EduDesignTokens.slate400.withOpacity(0.5),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 36),
                   ],
                 ),
               ),

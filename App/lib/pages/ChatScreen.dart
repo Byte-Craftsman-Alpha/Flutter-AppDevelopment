@@ -702,102 +702,104 @@ class _ChatGroupPageState extends State<ChatGroupPage>
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(gradient: systemExt.pageBackground),
-        child: Column(
-          children: [
-            Expanded(
-              child: _isSyncing
-                  ? Center(child: CircularProgressIndicator(color: Theme.of(context).primaryColor))
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      reverse: true,
-                      controller: _scrollController,
-                      physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-                      itemCount: _messagesList.length,
-                      itemBuilder: (context, index) {
-                        final message = _messagesList[index];
-                        final isMe = message['sender_id']?.toString() == widget.currentUserId;
-
-                        bool showDateSeparator = false;
-                        String separatorText = '';
-                        try {
-                          final currentMsgDate = DateTime.parse(message['created_at']).toLocal();
-                          if (index == _messagesList.length - 1) {
-                            showDateSeparator = true;
-                            separatorText = _getDateSeparatorText(currentMsgDate);
-                          } else {
-                            final nextMsg = _messagesList[index + 1];
-                            final nextMsgDate = DateTime.parse(nextMsg['created_at']).toLocal();
-                            if (currentMsgDate.year != nextMsgDate.year ||
-                                currentMsgDate.month != nextMsgDate.month ||
-                                currentMsgDate.day != nextMsgDate.day) {
+        child: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: _isSyncing
+                    ? Center(child: CircularProgressIndicator(color: Theme.of(context).primaryColor))
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        reverse: true,
+                        controller: _scrollController,
+                        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+                        itemCount: _messagesList.length,
+                        itemBuilder: (context, index) {
+                          final message = _messagesList[index];
+                          final isMe = message['sender_id']?.toString() == widget.currentUserId;
+          
+                          bool showDateSeparator = false;
+                          String separatorText = '';
+                          try {
+                            final currentMsgDate = DateTime.parse(message['created_at']).toLocal();
+                            if (index == _messagesList.length - 1) {
                               showDateSeparator = true;
                               separatorText = _getDateSeparatorText(currentMsgDate);
+                            } else {
+                              final nextMsg = _messagesList[index + 1];
+                              final nextMsgDate = DateTime.parse(nextMsg['created_at']).toLocal();
+                              if (currentMsgDate.year != nextMsgDate.year ||
+                                  currentMsgDate.month != nextMsgDate.month ||
+                                  currentMsgDate.day != nextMsgDate.day) {
+                                showDateSeparator = true;
+                                separatorText = _getDateSeparatorText(currentMsgDate);
+                              }
                             }
-                          }
-                        } catch (_) {}
-
-                        final messageBubble = GestureDetector(
-                          onLongPress: () => _showMessageActionSheet(message, isMe),
-                          child: _buildChatBubbleCard(message, isMe),
-                        );
-
-                        final String msgKey = message['ui_key']?.toString() ?? 
-                            message['id']?.toString() ?? 
-                            'index_${index}_${message['created_at']}';
-
-                        final swipeableBubble = Dismissible(
-                          key: ValueKey(msgKey),
-                          direction: DismissDirection.startToEnd,
-                          confirmDismiss: (direction) async {
-                            if (direction == DismissDirection.startToEnd) {
-                              setState(() {
-                                _replyingToMessage = message;
-                                _editingMessage = null; 
-                              });
-                            }
-                            return false;
-                          },
-                          background: Container(
-                            alignment: Alignment.centerLeft,
-                            padding: const EdgeInsets.only(left: 20.0),
-                            child: EduComponents.icon(
-                              context: context,
-                              iconData: const SolarIcon(SolarIcons.Reply, weight: SolarIconWeight.bold),
-                              color: Theme.of(context).primaryColor,
-                              size: 22,
+                          } catch (_) {}
+          
+                          final messageBubble = GestureDetector(
+                            onLongPress: () => _showMessageActionSheet(message, isMe),
+                            child: _buildChatBubbleCard(message, isMe),
+                          );
+          
+                          final String msgKey = message['ui_key']?.toString() ?? 
+                              message['id']?.toString() ?? 
+                              'index_${index}_${message['created_at']}';
+          
+                          final swipeableBubble = Dismissible(
+                            key: ValueKey(msgKey),
+                            direction: DismissDirection.startToEnd,
+                            confirmDismiss: (direction) async {
+                              if (direction == DismissDirection.startToEnd) {
+                                setState(() {
+                                  _replyingToMessage = message;
+                                  _editingMessage = null; 
+                                });
+                              }
+                              return false;
+                            },
+                            background: Container(
+                              alignment: Alignment.centerLeft,
+                              padding: const EdgeInsets.only(left: 20.0),
+                              child: EduComponents.icon(
+                                context: context,
+                                iconData: const SolarIcon(SolarIcons.Reply, weight: SolarIconWeight.bold),
+                                color: Theme.of(context).primaryColor,
+                                size: 22,
+                              ),
                             ),
-                          ),
-                          child: messageBubble,
-                        );
-
-                        final Widget bubbleWithSeparator = showDateSeparator
-                            ? Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  _buildSystemDateSeparator(separatorText),
-                                  swipeableBubble,
-                                ],
-                              )
-                            : swipeableBubble;
-
-                        return RepaintBoundary(child: bubbleWithSeparator);
-                      },
-                    ),
-            ),
-
-            AnimatedSize(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeInOut,
-              child: _buildReplyingPreviewTrack(),
-            ),
-            AnimatedSize(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeInOut,
-              child: _buildEditingPreviewTrack(),
-            ),
-
-            _buildInputActionTrack(),
-          ],
+                            child: messageBubble,
+                          );
+          
+                          final Widget bubbleWithSeparator = showDateSeparator
+                              ? Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    _buildSystemDateSeparator(separatorText),
+                                    swipeableBubble,
+                                  ],
+                                )
+                              : swipeableBubble;
+          
+                          return RepaintBoundary(child: bubbleWithSeparator);
+                        },
+                      ),
+              ),
+          
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+                child: _buildReplyingPreviewTrack(),
+              ),
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+                child: _buildEditingPreviewTrack(),
+              ),
+          
+              _buildInputActionTrack(),
+            ],
+          ),
         ),
       ),
     );

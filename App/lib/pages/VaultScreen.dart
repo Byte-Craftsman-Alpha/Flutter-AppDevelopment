@@ -574,7 +574,7 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
                     ),
                     child: EduComponents.icon(
                       context: context,
-                      iconData: const SolarIcon(SolarIcons.Documents, weight: SolarIconWeight.outline),
+                      iconData: const SolarIcon(SolarIcons.DocumentInNotes, weight: SolarIconWeight.outline),
                       color: systemExt.btnSoftText,
                       size: 28,
                     ),

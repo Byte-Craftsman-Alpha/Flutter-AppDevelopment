@@ -225,8 +225,8 @@ class _LoginScreenState extends State<LoginScreen> {
                               enabled: !_isLoading, // Block typing while querying
                               style: textTheme.bodyLarge?.copyWith(fontSize: 14),
                               decoration: InputDecoration(
-                                labelText: 'Roll Number',
-                                hintText: 'e.g., 2514670010038',
+                                labelText: 'Username',
+                                hintText: '',
                                 prefixIcon: Padding(
                                   padding: const EdgeInsets.all(12.0),
                                   child: EduComponents.icon(
@@ -239,7 +239,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               validator: (value) {
                                 if (value == null || value.trim().isEmpty) {
-                                  return 'Please enter your roll number';
+                                  return 'Please enter your username';
                                 }
                                 return null;
                               },
@@ -252,8 +252,8 @@ class _LoginScreenState extends State<LoginScreen> {
                               keyboardType: TextInputType.text,
                               style: textTheme.bodyLarge?.copyWith(fontSize: 14),
                               decoration: InputDecoration(
-                                labelText: 'Password (Date of Birth)',
-                                hintText: 'DD-MM-YYYY', // Helpful instruction for students
+                                labelText: 'Password',
+                                hintText: 'Enter your password',
                                 prefixIcon: Padding(
                                   padding: const EdgeInsets.all(12.0),
                                   child: EduComponents.icon(
@@ -281,7 +281,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               validator: (value) {
                                 if (value == null || value.isEmpty) {
-                                  return 'Please enter your Date of Birth as password';
+                                  return 'Please enter your password';
                                 }
                                 return null;
                               },
