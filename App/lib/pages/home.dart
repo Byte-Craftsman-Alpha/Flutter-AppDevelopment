@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:async'; // Added for TimeoutException handling
-import 'dart:io'; // Added for SocketException handling
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../constants/widgets.dart';
@@ -11,7 +10,6 @@ import 'package:intl/intl.dart';
 import 'package:flutty_solar_icons/flutty_solar_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../constants/theme.dart';
 import '../services/auth_service.dart';
@@ -113,9 +111,6 @@ class _MyHomePageState extends State<MyHomePage> {
 
     try {
       final token = await AuthService.getAuthToken();
-      final user = AuthService.currentUser;
-      final department = user?.department ?? '';
-      final semester = user?.semester ?? '4';
       final groupName = await AuthService.getSubscribedSchedule() ?? '';
 
       // 1. Fetch Latest 4 Vault Documents (With 15s Timeout)
@@ -222,16 +217,7 @@ class _MyHomePageState extends State<MyHomePage> {
   // =========================================================================
   void _showDigitalIdModal() {
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
-    final user = AuthService.currentUser;
     final theme = Theme.of(context);
-
-    // 💡 Generate the Encrypted String for the QR Code
-    final studentMap = {
-      'name': user?.name ?? '',
-      'roll': user?.rollNumber ?? '',
-      'dept': user?.department ?? '',
-    };
-    final String securePayload = CryptoService.encryptPayload(studentMap);
 
     showDialog(
       context: context,
@@ -341,99 +327,6 @@ class _MyHomePageState extends State<MyHomePage> {
           },
         );
       },
-    );
-  }
-
-  Widget _buildIdCardView(
-    user,
-    ThemeData theme,
-    EduPortalThemeExtension systemExt,
-    String payload,
-  ) {
-    return Container(
-      key: const ValueKey('id_card'),
-      padding: const EdgeInsets.all(24),
-      margin: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: BoxDecoration(
-        gradient: systemExt.primaryGradient,
-        borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  shape: BoxShape.circle,
-                ),
-                child: const Center(
-                  child: SolarIcon(
-                    SolarIcons.User,
-                    color: Colors.white,
-                    size: 32,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      user?.name ?? 'Student Name',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      user?.department ?? 'Department',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.8),
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
-            ),
-            child: Column(
-              children: [
-                QrImageView(
-                  data: payload,
-                  version: QrVersions.auto,
-                  size: 140,
-                  backgroundColor: Colors.white,
-                  errorCorrectionLevel: QrErrorCorrectLevel.M,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  user?.rollNumber ?? 'ROLL NUMBER',
-                  style: const TextStyle(
-                    color: Colors.black,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    letterSpacing: 2,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 

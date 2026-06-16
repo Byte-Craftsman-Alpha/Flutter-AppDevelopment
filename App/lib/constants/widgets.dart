@@ -1,30 +1,14 @@
-import 'dart:convert';
-import 'dart:async';
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-import 'package:path/path.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:flutty_solar_icons/flutty_solar_icons.dart';
 import 'package:google_fonts/google_fonts.dart'; // Ensure this is in pubspec.yaml
 
 // Custom project imports (Assuming these exist in your structure)
 import 'design_system.dart';
 import '../constants/theme.dart';
-import '../constants/widgets.dart';
 import '../services/auth_service.dart';
 import '../services/crypto_service.dart';
-import '../pages/CalendarScreen.dart';
-import '../pages/ChatScreen.dart';
-import '../pages/VaultScreen.dart';
-import '../pages/ProfileScreen.dart';
 
 class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String title;
