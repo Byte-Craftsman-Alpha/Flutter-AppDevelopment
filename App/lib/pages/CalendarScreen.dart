@@ -300,9 +300,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
       SnackBar(
         content: Row(
           children: [
-            EduComponents.icon(context: context, iconData: isError ? EduIcons.danger : EduIcons.success, color: Colors.white, size: 20),
+            EduComponents.icon(context: context, iconData: isError ? EduIcons.danger : EduIcons.success, color: isError ? systemExt.btnDangerText : Colors.white, size: 20),
             const SizedBox(width: 12),
-            Expanded(child: Text(message, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Colors.white))),
+            Expanded(child: Text(message, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: isError ? systemExt.btnDangerText : Colors.white))),
           ],
         ),
         backgroundColor: isError ? systemExt.btnDangerBg : EduDesignTokens.slate900,

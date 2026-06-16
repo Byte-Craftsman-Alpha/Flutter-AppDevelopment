@@ -62,7 +62,7 @@ class _ChatGroupPageState extends State<ChatGroupPage>
 
   Future<void> _initializeNotifications() async {
     const AndroidInitializationSettings androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+        AndroidInitializationSettings('app_icon');
 
     const DarwinInitializationSettings iosSettings =
         DarwinInitializationSettings(

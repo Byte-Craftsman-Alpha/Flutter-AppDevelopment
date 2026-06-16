@@ -64,8 +64,6 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     channelDescription: 'Real-time university alerts and group chats',
     importance: Importance.max,
     priority: Priority.high,
-    // 💡 FIXED: Explicitly force the notification channel to use your launcher icon
-    icon: '@mipmap/ic_launcher', 
   );
   
   await flutterLocalNotificationsPlugin.show(
@@ -143,7 +141,7 @@ class _MyAppState extends State<MyApp> {
       debugPrint('📱 Device FCM Token: $token');
 
       // 💡 Initialize Local Notifications for foreground/background taps
-      const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('app_icon');
       const InitializationSettings initSettings = InitializationSettings(android: androidSettings);
       
       await flutterLocalNotificationsPlugin.initialize(

@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'dart:async'; // Added for TimeoutException handling
 import 'dart:io'; // Added for SocketException handling
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../constants/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -301,12 +304,10 @@ class _MyHomePageState extends State<MyHomePage> {
                                 }
                               },
                             )
-                          : _buildIdCardView(
-                              user,
-                              theme,
-                              systemExt,
-                              securePayload,
-                            ),
+                          : Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: StudentIdCard(),
+                          ),
                     ),
 
                     Padding(
