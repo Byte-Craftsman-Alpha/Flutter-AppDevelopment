@@ -1,10 +1,13 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutty_solar_icons/flutty_solar_icons.dart';
-import 'package:package_info_plus/package_info_plus.dart'; // Added package info
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_service.dart';
-import '../constants/theme.dart'; // Mapped strictly to your centralized design system
-import 'login.dart'; // Import your login screen file path
+import '../constants/theme.dart';
+import 'login.dart'; 
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -17,6 +20,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _selectedSchedule;
   List<String> _availableSchedules = [];
   bool _isScheduleLoading = true;
+  bool _isSyncingProfile = false;
   
   // 💡 Local state cache to hold freshly synced backend data without breaking AuthService structures
   Map<String, dynamic>? _liveUserData;
@@ -29,575 +33,397 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
-    // Initialize with existing local auth data first
     _liveUserData = AuthService.currentUser?.toMap();
-    _loadSchedulePreferences();
-    _loadAppDetails(); // Fetch package info asynchronously
+    _loadAppDetails(); 
+    _initializeProfileData();
   }
 
-  // 💡 Fetch App Package Information
   Future<void> _loadAppDetails() async {
     try {
       PackageInfo packageInfo = await PackageInfo.fromPlatform();
       if (mounted) {
         setState(() {
           _appName = packageInfo.appName;
-          _appVersion = '${packageInfo.version} (Build ${packageInfo.buildNumber})';
+          _appVersion = packageInfo.version;
           _appPackage = packageInfo.packageName;
         });
       }
     } catch (e) {
-      debugPrint("❌ Failed to load app info: $e");
+      debugPrint("Could not fetch package info: $e");
     }
   }
 
-  // 💡 Fetch available options from Supabase and current preference from local disk
-  Future<void> _loadSchedulePreferences() async {
-    try {
-      // 1. Fetch current subscription choice from local storage via AuthService
-      final savedGroup = await AuthService.getSubscribedSchedule();
-
-      // 2. Fetch available schedule group names directly from Supabase
-      final List<dynamic> response = await Supabase.instance.client
-          .from('Weekly Schedules')
-          .select('ScheduleGroupName');
-
-      // Filter out duplicate or null group items safely
-      final groups = response
-          .map((row) => row['ScheduleGroupName']?.toString() ?? '')
-          .where((name) => name.isNotEmpty)
-          .toSet() 
-          .toList();
-
-      if (mounted) {
-        setState(() {
-          _availableSchedules = groups;
-          // Respect the "unselected" null state
-          _selectedSchedule = (savedGroup != null && savedGroup.isNotEmpty && groups.contains(savedGroup)) 
-              ? savedGroup 
-              : null;
-          _isScheduleLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isScheduleLoading = false;
-        });
-      }
+  Future<void> _initializeProfileData() async {
+    // Load local schedule preference first for immediate UI rendering
+    final localSub = await AuthService.getSubscribedSchedule();
+    if (mounted) {
+      setState(() {
+        _selectedSchedule = (localSub != null && localSub.isNotEmpty) ? localSub : null;
+      });
     }
+
+    // Then securely fetch available groups and live profile from backend
+    await Future.wait([
+      _fetchAvailableSchedules(),
+      _syncLiveProfile(silent: true),
+    ]);
   }
 
-  // 💡 Chrome-style Pull-to-Refresh Sync Handler
-  Future<void> _syncProfileData() async {
+  // 💡 SECURE ROUTE: Fetch Schedule Groups from Middleware, NOT Supabase
+  Future<void> _fetchAvailableSchedules() async {
+    if (!mounted) return;
     setState(() => _isScheduleLoading = true);
-    
-    // 1. Re-sync schedule lists
-    await _loadSchedulePreferences();
-    
-    // 2. Fetch latest raw user data directly from backend database
-    final user = AuthService.currentUser;
-    if (user != null) {
-      try {
-        final response = await Supabase.instance.client
-            .from('StudentDetails')
-            .select()
-            .eq('Roll_No', user.rollNumber)
-            .maybeSingle();
 
-        if (response != null && mounted) {
+    try {
+      final token = await AuthService.getAuthToken();
+      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/schedule/groups?token=$token');
+      
+      final response = await http.get(url).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        if (mounted) {
           setState(() {
-            _liveUserData = response; // Update local screen state with fresh database row
+            _availableSchedules = data.map((e) => e.toString()).toList();
+            _availableSchedules.sort(); 
           });
         }
-      } catch (e) {
-        debugPrint("❌ Profile Sync Failed: $e");
+      }
+    } on SocketException catch (_) {
+      debugPrint("Offline mode: Cannot fetch schedule groups.");
+    } catch (e) {
+      debugPrint("Schedule fetch error: $e");
+    } finally {
+      if (mounted) setState(() => _isScheduleLoading = false);
+    }
+  }
+
+  // 💡 SECURE ROUTE: Sync Profile data through Backend Wrapper
+  Future<void> _syncLiveProfile({bool silent = false}) async {
+    if (_isSyncingProfile) return;
+    if (!silent && mounted) setState(() => _isSyncingProfile = true);
+
+    try {
+      final token = await AuthService.getAuthToken();
+      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/profile/sync?token=$token');
+      
+      final response = await http.get(url).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> liveData = json.decode(response.body);
+        if (mounted) {
+          setState(() {
+            _liveUserData = liveData;
+          });
+          if (!silent) _showToast("Profile synchronized securely.", isError: false);
+        }
+      } else if (!silent) {
+        throw Exception("Server rejected profile sync.");
+      }
+    } on SocketException catch (_) {
+      if (!silent) _showToast("No internet connection. Viewing offline profile.", isError: true);
+    } catch (e) {
+      debugPrint("Profile sync error: $e");
+      if (!silent) _showToast("Failed to sync profile from server.", isError: true);
+    } finally {
+      if (mounted) setState(() => _isSyncingProfile = false);
+    }
+  }
+
+  Future<void> _updateSchedulePreference(String? newValue) async {
+    setState(() => _selectedSchedule = newValue);
+    if (newValue != null) {
+      await AuthService.saveSubscribedSchedule(newValue);
+      _showToast("Timetable updated to $newValue", isError: false);
+    } else {
+      // Pass an empty string instead of using a non-existent clear method
+      await AuthService.saveSubscribedSchedule('');
+      _showToast("Timetable subscription removed", isError: false);
+    }
+  }
+
+  Future<void> _handleLogout() async {
+    // Directly clear local cache to log the user out and avoid missing method errors
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    
+    if (!mounted) return;
+    
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+      (route) => false,
+    );
+  }
+
+  void _showToast(String message, {bool isError = true}) {
+    if (!mounted) return;
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+    
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            EduComponents.icon(
+              context: context, 
+              iconData: isError ? EduIcons.danger : EduIcons.success, 
+              color: isError ? systemExt.btnDangerText : Colors.greenAccent, 
+              size: 20
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                message, 
+                style: TextStyle(
+                  fontWeight: FontWeight.w600, 
+                  fontSize: 13, 
+                  color: isError ? systemExt.btnDangerText : Colors.white
+                ),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: isError ? systemExt.btnDangerBg : EduDesignTokens.slate900,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+        ),
+        margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  // 💡 Robust helper to extract fields from the backend JSON regardless of column case
+  String _extractField(List<String> keys, {String defaultVal = "Not provided"}) {
+    if (_liveUserData == null) return defaultVal;
+    
+    final lowerCaseMap = _liveUserData!.map((key, value) => MapEntry(key.toLowerCase().trim(), value));
+    
+    for (String k in keys) {
+      final normalizedKey = k.toLowerCase().trim();
+      if (lowerCaseMap.containsKey(normalizedKey) && lowerCaseMap[normalizedKey] != null) {
+        final valStr = lowerCaseMap[normalizedKey].toString().trim();
+        if (valStr.isNotEmpty && valStr != "null") return valStr;
       }
     }
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              EduComponents.icon(
-                context: context, 
-                iconData: EduIcons.success, 
-                color: Colors.greenAccent, 
-                size: 20
-              ),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Text(
-                  'Profile and schedules synced successfully.',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: Theme.of(context).primaryColor,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl)),
-        ),
-      );
-    }
-  }
-
-  // 💡 Confirmation Dialog for Schedule Change
-  void _showScheduleChangeConfirmation(String? newGroupName) {
-    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
-    final dialogTheme = Theme.of(context);
-    
-    final actionText = newGroupName == null ? 'Clear Schedule' : 'Update Schedule';
-    final bodyText = newGroupName == null 
-        ? 'Are you sure you want to unassign your schedule? Your dashboard timetable will be cleared.'
-        : 'Are you sure you want to subscribe to $newGroupName? Your dashboard timetable will be updated to reflect this section.';
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: dialogTheme.cardColor,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
-            side: BorderSide(color: systemExt.borderNeutral),
-          ),
-          title: Text(
-            'Confirm Subscription', 
-            style: dialogTheme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          content: Text(
-            bodyText, 
-            style: dialogTheme.textTheme.bodyMedium,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text(
-                'Cancel', 
-                style: TextStyle(color: EduDesignTokens.slate400, fontWeight: FontWeight.bold),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                _handleScheduleChange(newGroupName);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: dialogTheme.primaryColor,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
-                ),
-                elevation: 0,
-              ),
-              child: Text(actionText, style: const TextStyle(fontWeight: FontWeight.bold)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // 💡 Handler when user confirms the dropdown value selection
-  Future<void> _handleScheduleChange(String? newGroupName) async {
-    setState(() {
-      _selectedSchedule = newGroupName;
-    });
-    
-    // 💡 SECURE SAVE: If null, save an empty string to signify "unselected" in shared preferences
-    await AuthService.saveSubscribedSchedule(newGroupName ?? "");
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              EduComponents.icon(
-                context: context, 
-                iconData: EduIcons.success, 
-                color: Colors.greenAccent, 
-                size: 20
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  newGroupName == null 
-                      ? 'Schedule unselected successfully.' 
-                      : 'Subscribed to $newGroupName successfully!',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: Theme.of(context).primaryColor,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl)),
-        ),
-      );
-    }
-  }
-
-  // 💡 Confirmation Dialog for User Logout
-  void _showLogoutConfirmation() {
-    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
-    final dialogTheme = Theme.of(context);
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: dialogTheme.cardColor,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
-            side: BorderSide(color: systemExt.borderNeutral),
-          ),
-          title: Text(
-            'Log Out', 
-            style: dialogTheme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          content: Text(
-            'Are you sure you want to log out of your account? You will need your credentials to sign back in.', 
-            style: dialogTheme.textTheme.bodyMedium,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text(
-                'Cancel', 
-                style: TextStyle(color: EduDesignTokens.slate400, fontWeight: FontWeight.bold),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                await AuthService.clearSession();
-                if (mounted) {
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (context) => const LoginScreen()),
-                    (route) => false,
-                  );
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: systemExt.btnDangerBg,
-                foregroundColor: systemExt.btnDangerText,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
-                  side: BorderSide(color: systemExt.btnDangerBorder),
-                ),
-                elevation: 0,
-              ),
-              child: const Text('Log Out', style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-          ],
-        );
-      },
-    );
+    return defaultVal;
   }
 
   @override
   Widget build(BuildContext context) {
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
-    final theme = Theme.of(context);
-    final textTheme = theme.textTheme;
+    final textTheme = Theme.of(context).textTheme;
 
-    final user = AuthService.currentUser;
-    final fallbackMap = user?.toMap() ?? {};
+    // Extract Display Data Safely
+    final userName = _extractField(['name', 'student_name'], defaultVal: AuthService.currentUser?.name ?? "Student");
+    final userRoll = _extractField(['roll_no', 'roll_number'], defaultVal: AuthService.currentUser?.rollNumber ?? "");
+    final userDept = _extractField(['department', 'programme', 'branch'], defaultVal: AuthService.currentUser?.department ?? "");
+    final userSem = _extractField(['semester', 'sem'], defaultVal: "4");
     
-    // 💡 BULLETPROOF MAPPING: Applies exhaustive PascalCase fallbacks AND strict .toString() casting
-    final String displayedName = (_liveUserData?['name'] ?? _liveUserData?['Name'] ?? fallbackMap['name'] ?? 'Student').toString();
-    final String displayedRoll = (_liveUserData?['roll_no'] ?? _liveUserData?['Roll_No'] ?? fallbackMap['rollNumber'] ?? 'N/A').toString();
-    final String displayedEmail = (_liveUserData?['email'] ?? _liveUserData?['Email'] ?? fallbackMap['email'] ?? 'Not Provided').toString();
-    final String displayedDept = (_liveUserData?['programme'] ?? _liveUserData?['department'] ?? fallbackMap['department'] ?? 'Not Assigned').toString();
-    final String displayedDoB = (_liveUserData?['dob'] ?? _liveUserData?['date_of_birth'] ?? fallbackMap['dob'] ?? 'N/A').toString();
-    final String displayedMobile = (_liveUserData?['mobile_no'] ?? _liveUserData?['Mobile_No'] ?? _liveUserData?['mobile'] ?? fallbackMap['mobileNo'] ?? 'N/A').toString();
-    final String displayedAadhaar = (_liveUserData?['aadhaar'] ?? _liveUserData?['Aadhaar'] ?? _liveUserData?['aadhaar_no'] ?? fallbackMap['aadhaar'] ?? 'N/A').toString();
-
-    // 💡 Extended robust parsing for Additional Details
-    final String displayedEnrollment = (_liveUserData?['enrollment_no'] ?? _liveUserData?['Enrollment_No'] ?? fallbackMap['enrollmentNo'] ?? 'N/A').toString();
-    final String displayedFather = (_liveUserData?['father_name'] ?? _liveUserData?['Father_Name'] ?? fallbackMap['fatherName'] ?? 'N/A').toString();
-    final String displayedMother = (_liveUserData?['mother_name'] ?? _liveUserData?['Mother_Name'] ?? fallbackMap['motherName'] ?? 'N/A').toString();
-    final String displayedApaar = (_liveUserData?['apaar_id'] ?? _liveUserData?['Apaar_ID'] ?? fallbackMap['apaarId'] ?? 'N/A').toString();
-    final String displayedAddress = (_liveUserData?['address'] ?? _liveUserData?['Address'] ?? fallbackMap['address'] ?? 'N/A').toString();
-    final String displayedCategory = (_liveUserData?['category'] ?? _liveUserData?['Category'] ?? fallbackMap['category'] ?? 'N/A').toString();
+    final initialLetter = userName.isNotEmpty ? userName.substring(0, 1).toUpperCase() : "S";
 
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
-          gradient: systemExt.pageBackground,
-        ),
+        decoration: BoxDecoration(gradient: systemExt.pageBackground),
         child: SafeArea(
-          // 💡 PULL-TO-REFRESH WRAPPER
           child: RefreshIndicator(
-            onRefresh: _syncProfileData,
-            color: theme.primaryColor,
-            backgroundColor: theme.cardColor,
+            color: Theme.of(context).primaryColor,
+            onRefresh: () => _syncLiveProfile(silent: false),
             child: SingleChildScrollView(
               physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    Text('Student Profile', style: textTheme.titleLarge?.copyWith(fontSize: 24, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 24),
-                    
-                    // Profile Avatar Badge Display (Adaptive Colors)
-                    Center(
-                      child: Container(
-                        width: 90,
-                        height: 90,
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).brightness == Brightness.dark
-                              ? EduDesignTokens.indigo500.withOpacity(0.15)
-                              : EduDesignTokens.indigo50,
-                          borderRadius: BorderRadius.circular(EduDesignTokens.radius3xl),
-                          border: Border.all(
-                            color: theme.primaryColor.withOpacity(0.2),
-                            width: 1.5,
+
+                    // 💡 Profile Identity Card
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).cardColor,
+                        borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
+                        border: Border.all(color: systemExt.borderNeutral),
+                        boxShadow: systemExt.cardBaseShadow,
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                width: 64, height: 64,
+                                decoration: BoxDecoration(
+                                  color: EduDesignTokens.indigo500.withOpacity(0.15),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Theme.of(context).primaryColor.withOpacity(0.3), width: 2),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    initialLetter, 
+                                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Theme.of(context).primaryColor),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(userName, style: textTheme.titleMedium?.copyWith(fontSize: 18), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                    const SizedBox(height: 4),
+                                    EduComponents.badge(
+                                      backgroundColor: systemExt.btnSoftBg, 
+                                      textColor: systemExt.btnSoftText, 
+                                      child: Text(userRoll, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, letterSpacing: 0.5))
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                          boxShadow: systemExt.avatarShadow,
-                        ),
-                        child: Center(
-                          child: Text(
-                            displayedName.isNotEmpty && displayedName != "null" 
-                                ? displayedName[0].toUpperCase() 
-                                : 'S',
-                            style: TextStyle(
-                              color: theme.primaryColor,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 32,
-                            ),
-                          ),
-                        ),
+                          const Divider(height: 32, thickness: 1),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: _isSyncingProfile ? null : () => _syncLiveProfile(silent: false),
+                                  icon: _isSyncingProfile 
+                                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                    : EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.RefreshCircle, weight: SolarIconWeight.outline), size: 18),
+                                  label: const Text('Sync Data', style: TextStyle(fontWeight: FontWeight.bold)),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Theme.of(context).primaryColor,
+                                    side: BorderSide(color: systemExt.borderNeutral),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl)),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: _handleLogout,
+                                  icon: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.Logout, weight: SolarIconWeight.bold), color: systemExt.btnDangerText, size: 18),
+                                  label: const Text('Sign Out', style: TextStyle(fontWeight: FontWeight.bold)),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: systemExt.btnDangerText,
+                                    side: BorderSide(color: systemExt.btnDangerBorder),
+                                    backgroundColor: systemExt.btnDangerBg,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl)),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          )
+                        ],
                       ),
                     ),
+
+                    const SizedBox(height: 24),
+                    Text('Timetable Configuration', style: textTheme.titleMedium),
                     const SizedBox(height: 12),
-                    Center(
-                      child: Text(
-                        displayedName != "null" ? displayedName : 'Student',
-                        textAlign: TextAlign.center,
-                        style: textTheme.titleLarge,
-                      ),
-                    ),
-                    const SizedBox(height: 28),
 
-                    // --- TIMETABLE SUBSCRIPTION WIDGET CARD ---
-                    EduComponents.card(
-                      context: context,
-                      child: Padding(
-                        padding: const EdgeInsets.all(20.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                EduComponents.icon(
-                                  context: context,
-                                  iconData: EduIcons.attendanceInactive,
-                                  color: theme.primaryColor,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'WEEKLY SCHEDULE SUBSCRIPTION',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: theme.primaryColor,
-                                    letterSpacing: 1.2,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const Divider(height: 24, thickness: 1),
-                            Text(
-                              'Select your class section group to synchronize and view personalized schedules across the dashboard:',
-                              style: textTheme.bodyMedium,
-                            ),
-                            const SizedBox(height: 16),
-                            _isScheduleLoading
-                                ? Center(
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(8.0),
-                                      child: CircularProgressIndicator(color: theme.primaryColor),
-                                    ),
-                                  )
-                                : Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: systemExt.btnSoftBg,
-                                      borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
-                                      border: Border.all(color: systemExt.btnSoftBorder),
-                                    ),
-                                    child: DropdownButtonHideUnderline(
-                                      child: DropdownButton<String?>(
-                                        value: _selectedSchedule,
-                                        isExpanded: true,
-                                        dropdownColor: theme.cardColor,
-                                        icon: Icon(Icons.keyboard_arrow_down_rounded, color: theme.primaryColor),
-                                        hint: Text('Select a schedule block', style: textTheme.bodyMedium),
-                                        items: [
-                                          DropdownMenuItem<String?>(
-                                            value: null,
-                                            child: Text(
-                                              'Unassigned / None',
-                                              style: textTheme.bodyLarge?.copyWith(
-                                                fontWeight: FontWeight.w600,
-                                                color: EduDesignTokens.slate400,
-                                              ),
-                                            ),
-                                          ),
-                                          ..._availableSchedules.map((String value) {
-                                            return DropdownMenuItem<String?>(
-                                              value: value,
-                                              child: Text(
-                                                value,
-                                                style: textTheme.bodyLarge?.copyWith(
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                            );
-                                          }),
-                                        ],
-                                        onChanged: (newGroupName) {
-                                          if (newGroupName != _selectedSchedule) {
-                                            _showScheduleChangeConfirmation(newGroupName);
-                                          }
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                          ],
-                        ),
+                    // 💡 Schedule Dropdown Configuration
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).cardColor,
+                        borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+                        border: Border.all(color: systemExt.borderNeutral),
+                        boxShadow: systemExt.cardHoverShadow,
                       ),
-                    ),
-                    const SizedBox(height: 24),
-
-                    // Student Profile Data Card
-                    EduComponents.card(
-                      context: context,
-                      child: Padding(
-                        padding: const EdgeInsets.all(20.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'STUDENT PROFILE DATA',
-                              style: TextStyle(
-                                fontSize: 11, 
-                                fontWeight: FontWeight.bold, 
-                                color: EduDesignTokens.slate400,
-                                letterSpacing: 1.2,
+                      child: _isScheduleLoading
+                          ? const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16.0),
+                              child: Center(child: CircularProgressIndicator()),
+                            )
+                          : DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                isExpanded: true,
+                                value: _selectedSchedule,
+                                hint: Text('Select your academic section', style: TextStyle(color: EduDesignTokens.slate400, fontSize: 14)),
+                                icon: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.AltArrowDown, weight: SolarIconWeight.outline), color: EduDesignTokens.slate400),
+                                dropdownColor: Theme.of(context).cardColor,
+                                borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+                                items: [
+                                  const DropdownMenuItem<String>(
+                                    value: null,
+                                    child: Text('Unassigned / No Section', style: TextStyle(fontWeight: FontWeight.bold, color: EduDesignTokens.slate400)),
+                                  ),
+                                  ..._availableSchedules.map((String value) {
+                                    return DropdownMenuItem<String>(
+                                      value: value,
+                                      child: Text('Section: $value', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                    );
+                                  }),
+                                ],
+                                onChanged: _updateSchedulePreference,
                               ),
                             ),
-                            const Divider(height: 24, thickness: 1),
-                            _buildProfileRow('Student Name', displayedName),
-                            const SizedBox(height: 16),
-                            _buildProfileRow('Roll Number', displayedRoll),
-                            const SizedBox(height: 16),
-                            _buildProfileRow('Programme / Branch', displayedDept),
-                            const SizedBox(height: 16),
-                            _buildProfileRow('Email Address', displayedEmail),
-                            const SizedBox(height: 16),
-                            _buildProfileRow('Mobile Number', displayedMobile),
-                            const SizedBox(height: 16),
-                            _buildProfileRow('Aadhaar Number', displayedAadhaar),
-                            const SizedBox(height: 16),
-                            _buildProfileRow('Date of Birth (Login Pin)', displayedDoB, isSecret: true),
-                          ],
-                        ),
-                      ),
                     ),
-                    const SizedBox(height: 24),
 
-                    // Additional Details Box Structure Block
-                    EduComponents.card(
-                      context: context,
-                      child: Padding(
-                        padding: const EdgeInsets.all(20.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'ADDITIONAL DETAILS',
-                              style: TextStyle(
-                                fontSize: 11, 
-                                fontWeight: FontWeight.bold, 
-                                color: EduDesignTokens.slate400,
-                                letterSpacing: 1.2,
-                              ),
-                            ),
-                            const Divider(height: 24, thickness: 1),
-                            _buildProfileRow('Enrollment Number', displayedEnrollment),
-                            const SizedBox(height: 16),
-                            _buildProfileRow('Father\'s Name', displayedFather),
-                            const SizedBox(height: 16),
-                            _buildProfileRow('Mother\'s Name', displayedMother),
-                            const SizedBox(height: 16),
-                            _buildProfileRow('Apaar ID', displayedApaar),
-                            const SizedBox(height: 16),
-                            _buildProfileRow('Address', displayedAddress),
-                            const SizedBox(height: 16),
-                            _buildProfileRow('Category', displayedCategory),
-                          ],
-                        ),
+                    const SizedBox(height: 24),
+                    Text('Academic Identity', style: textTheme.titleMedium),
+                    const SizedBox(height: 12),
+
+                    // 💡 Academic Details Container
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).cardColor,
+                        borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
+                        border: Border.all(color: systemExt.borderNeutral),
+                      ),
+                      child: Column(
+                        children: [
+                          _buildProfileRow('Programme / Department', userDept),
+                          const Divider(height: 24, thickness: 1),
+                          _buildProfileRow('Current Semester', 'Semester $userSem'),
+                          const Divider(height: 24, thickness: 1),
+                          _buildProfileRow('Date of Birth', _extractField(['dob', 'date_of_birth']), isSecret: true),
+                          const Divider(height: 24, thickness: 1),
+                          _buildProfileRow('Email Address', _extractField(['email'])),
+                          const Divider(height: 24, thickness: 1),
+                          _buildProfileRow('Mobile Number', _extractField(['mobile', 'mobile_no', 'phone'])),
+                          const Divider(height: 24, thickness: 1),
+                          _buildProfileRow('Enrollment No.', _extractField(['enrollment_no', 'enrollment'])),
+                        ],
                       ),
                     ),
+
                     const SizedBox(height: 36),
-
-                    // Modern Action Logout Submission Button Layout
-                    EduComponents.adminDangerButton(
-                      context: context,
-                      onPressed: _showLogoutConfirmation,
-                      child: const Text(
-                        'Log Out of Account',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    const SizedBox(height: 32),
-
-                    // --- 💡 App Version Information Block ---
+                    
+                    // App Information Footer
                     Center(
                       child: Column(
-                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          EduComponents.icon(
-                            context: context,
-                            iconData: const SolarIcon(SolarIcons.CodeSquare, weight: SolarIconWeight.outline),
-                            size: 24,
-                            color: EduDesignTokens.slate300,
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(color: systemExt.btnSoftBg, shape: BoxShape.circle),
+                            child: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.Code, weight: SolarIconWeight.outline), size: 24, color: EduDesignTokens.slate400),
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 12),
                           Text(
-                            _appName,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                              color: EduDesignTokens.slate400,
-                            ),
+                            '$_appName v$_appVersion',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: EduDesignTokens.slate500),
                           ),
-                          const SizedBox(height: 2),
+                          const SizedBox(height: 4),
                           Text(
-                            _appVersion.isNotEmpty ? 'Version $_appVersion' : 'Loading version...',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: EduDesignTokens.slate400.withOpacity(0.8),
-                            ),
+                            'Secure Academic Middleware System',
+                            style: TextStyle(fontSize: 11, color: EduDesignTokens.slate400.withOpacity(0.8)),
                           ),
                           const SizedBox(height: 2),
                           Text(
                             _appPackage,
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: EduDesignTokens.slate400.withOpacity(0.5),
-                            ),
+                            style: TextStyle(fontSize: 10, color: EduDesignTokens.slate400.withOpacity(0.5)),
                           ),
+                          const SizedBox(height: 36),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 36),
                   ],
                 ),
               ),
@@ -610,21 +436,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildProfileRow(String label, String value, {bool isSecret = false}) {
     final textTheme = Theme.of(context).textTheme;
-    // Safety check to ensure "null" strings don't render on the UI
-    final safeValue = (value == "null" || value.isEmpty) ? "N/A" : value;
+    final safeValue = (value == "null" || value.isEmpty) ? "Not provided" : value;
     
-    return Column(
+    return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label, 
-          style: textTheme.labelSmall?.copyWith(color: EduDesignTokens.slate400),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          isSecret ? '•••••••• / $safeValue' : safeValue,
-          style: textTheme.bodyLarge?.copyWith(
-            fontWeight: FontWeight.bold,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: textTheme.labelSmall?.copyWith(color: EduDesignTokens.slate400)),
+              const SizedBox(height: 4),
+              Text(
+                isSecret ? '•••••••• / $safeValue' : safeValue,
+                style: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+            ],
           ),
         ),
       ],

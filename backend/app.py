@@ -42,7 +42,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 43200  # Tokens stay valid persistently for 30 Day
 # Initialize Administrative Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-# 💡 FIXED: Changed List[String] to List[str] to prevent Python compilation / startup NameErrors on Vercel
+# 💡 Helper: Case-Insensitive Dictionary Lookup
 def get_field_insensitive(data: Dict[str, Any], target_keys: List[str], default_val: str = "") -> str:
     """
     Looks up a dictionary value by matching keys case-insensitively 
@@ -80,7 +80,7 @@ async def get_current_user(token: str) -> dict:
         raise credentials_exception
 
 # -------------------------------------------------------------------------
-# 1. CENTRALIZED AUTHENTICATION CONTROLLER (Robust Version-Safe Matching)
+# 1. CENTRALIZED AUTHENTICATION CONTROLLER
 # -------------------------------------------------------------------------
 @app.post("/api/auth/login")
 async def secure_login(payload: dict):
@@ -90,12 +90,10 @@ async def secure_login(payload: dict):
     if not roll_number or not entered_password:
         raise HTTPException(status_code=400, detail="Missing required input credentials fields.")
 
-    # 💡 OPTIMIZATION: Replaced non-standard .maybe_single() with standard list slice for cross-version compatibility
     response = supabase.table("StudentDetails").select("*").eq("Roll_No", roll_number).execute()
     student = response.data[0] if response.data else None
 
     if not student:
-        # Secondary fallback lookup mapping parameter parsing patterns
         parsed_roll = int(roll_number) if roll_number.isdigit() else None
         if parsed_roll:
             response = supabase.table("StudentDetails").select("*").eq("Roll_No", parsed_roll).execute()
@@ -104,34 +102,25 @@ async def secure_login(payload: dict):
     if not student:
         raise HTTPException(status_code=404, detail="No matching student record workspace registered.")
 
-    # 💡 Robust, Case-Insensitive key retrieval for Date of Birth field parameters
-    correct_dob = get_field_insensitive(
-        student, 
-        ["dob", "date_of_birth"], 
-        default_val=""
-    )
+    correct_dob = get_field_insensitive(student, ["dob", "date_of_birth"], default_val="")
 
     if not correct_dob:
         raise HTTPException(status_code=500, detail="Date of Birth data schema column missing in database mapping.")
 
-    # 💡 Normalize both passwords by stripping non-numeric characters (hyphens, slashes, spaces)
     clean_entered = "".join(filter(str.isdigit, entered_password))
     clean_correct = "".join(filter(str.isdigit, correct_dob))
 
-    # Support fallback to direct string comparison if digit cleaning yields empty outcomes
     is_match = (clean_entered == clean_correct and clean_entered != "") or (entered_password == correct_dob)
 
     if not is_match:
         raise HTTPException(status_code=401, detail="Invalid password parameters.")
 
-    # 💡 Case-Insensitive Extraction for User Properties Mapping
     student_name = get_field_insensitive(student, ["name"], "Student")
     student_roll = get_field_insensitive(student, ["roll_no", "roll_number", "roll_no."], roll_number)
     student_email = get_field_insensitive(student, ["email"])
     student_programme = get_field_insensitive(student, ["programme", "department", "dept", "branch"])
     student_semester = get_field_insensitive(student, ["semester"], "4")
 
-    # Issue Secure Server-Signed JWT Access Credentials back to the device layout environment
     token_data = {
         "sub": student_roll,
         "name": student_name,
@@ -150,7 +139,6 @@ async def secure_login(payload: dict):
             "department": student_programme,
             "semester": student_semester,
             "dob": correct_dob,
-            # Additional optional metrics for dynamic user mapping details
             "Mobile_No": get_field_insensitive(student, ["mobile_no", "mobile", "phone"]),
             "Aadhaar": get_field_insensitive(student, ["aadhaar", "aadhaar_no"]),
             "enrollment_no": get_field_insensitive(student, ["enrollment_no", "enrollment"]),
@@ -163,18 +151,53 @@ async def secure_login(payload: dict):
         }
     }
 
+# -------------------------------------------------------------------------
+# 2. TELEGRAM PROXY (Isolating the Bot Token from the APK)
+# -------------------------------------------------------------------------
+@app.get("/api/files/resolve")
+async def resolve_cloud_file(file_id: str, token: str):
+    """Securely translates Telegram File IDs into Downloadable URLs."""
+    await get_current_user(token) # Validate session exists
+    async with httpx.AsyncClient() as client:
+        uri = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
+        response = await client.get(uri)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("ok"):
+                file_path = data["result"]["file_path"]
+                return {"url": f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"}
+        raise HTTPException(status_code=404, detail="Could not resolve file link.")
+
+@app.post("/api/chat/upload_file")
+async def chat_file_upload(token: str = Form(...), file: UploadFile = File(...)):
+    """Uploads a file directly to Telegram for group chats without touching Supabase."""
+    await get_current_user(token)
+    async with httpx.AsyncClient() as client:
+        telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+        file_bytes = await file.read()
+        files = {"document": (file.filename, file_bytes)}
+        data = {"chat_id": TELEGRAM_CHAT_ID}
+        
+        tg_response = await client.post(telegram_url, files=files, data=data)
+        if tg_response.status_code != 200:
+            raise HTTPException(status_code=500, detail="Cloud storage cluster handshake failed.")
+            
+        tg_data = tg_response.json()
+        return {
+            "success": True, 
+            "file_id": tg_data["result"]["document"]["file_id"],
+            "file_name": file.filename,
+            "file_size": len(file_bytes),
+            "extension": file.filename.split(".")[-1] if "." in file.filename else "file"
+        }
 
 # -------------------------------------------------------------------------
-# 2. DOCUMENT VAULT MANAGEMENT PIPELINE (Per-user sandboxing)
+# 3. DOCUMENT VAULT MANAGEMENT PIPELINE (Per-user sandboxing)
 # -------------------------------------------------------------------------
 @app.post("/api/vault/upload")
-async def vault_upload_pipeline(
-    token: str = Form(...),
-    file: UploadFile = File(...)
-):
+async def vault_upload_pipeline(token: str = Form(...), file: UploadFile = File(...)):
     user = await get_current_user(token)
     
-    # Securely stream files straight from backend routing parameters directly to Telegram API boundaries
     async with httpx.AsyncClient() as client:
         telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
         file_bytes = await file.read()
@@ -189,7 +212,6 @@ async def vault_upload_pipeline(
         tg_data = tg_response.json()
         cloud_file_id = tg_data["result"]["document"]["file_id"]
 
-    # Write entry transaction safely down to SQLite/Supabase index layers via centralized server rules
     record_id = str(int(datetime.utcnow().timestamp() * 1000))
     vault_entry = {
         "id": record_id,
@@ -207,13 +229,18 @@ async def vault_upload_pipeline(
 @app.get("/api/vault/records")
 async def get_vault_records(token: str):
     user = await get_current_user(token)
-    # Strictly sandbox database queries based on JWT session validation parameters
     response = supabase.table("student_vault").select("*").eq("user_id", user["roll_number"]).execute()
     return response.data
 
+@app.delete("/api/vault/delete")
+async def delete_vault_record(record_id: str, token: str):
+    user = await get_current_user(token)
+    # Security: .eq("user_id", ...) strictly enforces that a user can only delete their own files
+    response = supabase.table("student_vault").delete().eq("id", record_id).eq("user_id", user["roll_number"]).execute()
+    return {"success": True}
 
 # -------------------------------------------------------------------------
-# 3. CHAT ROOM MIDDLEWARE ROUTER & DISPATCHER
+# 4. CHAT ROOM MIDDLEWARE ROUTER & DISPATCHER
 # -------------------------------------------------------------------------
 @app.post("/api/chat/send")
 async def handle_chat_delivery(message: dict, token: str):
@@ -232,62 +259,87 @@ async def handle_chat_delivery(message: dict, token: str):
         "created_at": datetime.utcnow().isoformat()
     }
     
-    # Save directly to centralized collection pools
     db_response = supabase.table("GroupChats").insert(chat_entry).execute()
-    
-    # Trigger background tasks to target external Firebase channels synchronously
     return {"success": True, "data": db_response.data}
 
+@app.get("/api/chat/history")
+async def get_chat_history(token: str):
+    await get_current_user(token)
+    response = supabase.table("GroupChats").select("*").order("created_at", desc=True).limit(100).execute()
+    return response.data
+
+@app.put("/api/chat/update")
+async def edit_chat_message(payload: dict, token: str):
+    user = await get_current_user(token)
+    message_id = payload.get("message_id")
+    new_body = payload.get("new_body")
+    
+    if not message_id or not new_body:
+        raise HTTPException(status_code=400, detail="Missing message_id or new_body parameters.")
+    
+    # Security: Check sender_id to prevent users from editing other people's messages
+    response = supabase.table("GroupChats").update({
+        "message_body": new_body, 
+        "is_edited": True
+    }).eq("id", message_id).eq("sender_id", user["roll_number"]).execute()
+    
+    return {"success": True, "data": response.data}
+
+@app.delete("/api/chat/delete")
+async def delete_chat_message(message_id: str, token: str):
+    user = await get_current_user(token)
+    # Security: Check sender_id to prevent users from deleting other people's messages
+    response = supabase.table("GroupChats").delete().eq("id", message_id).eq("sender_id", user["roll_number"]).execute()
+    return {"success": True}
 
 # -------------------------------------------------------------------------
-# 4. ACADEMIC SCHEDULES & TIMETABLE RESOURCE DELIVERY ENGINE (Upgraded)
+# 5. PROFILE, SCHEDULES & TIMETABLE RESOURCE DELIVERY ENGINE
 # -------------------------------------------------------------------------
 @app.get("/api/schedule/fetch")
 async def fetch_academic_schedules(department: str, semester: str, group_name: Optional[str] = None):
-    # Handle both explicit department checks and calendar event bypass blocks seamlessly
     if department == "Calendar" and semester == "Events":
         response = supabase.table("Monthly Calendar").select("*").execute()
         return response.data
 
-    # Fetch all weekly schedules to perform case-insensitive and column-insensitive filtering in memory.
-    # This completely shields the synchronization pipeline from PostgreSQL structural and casing variations.
     response = supabase.table("Weekly Schedules").select("*").execute()
     all_schedules = response.data or []
 
-    # 💡 1. Prioritize strict matching by group_name (ScheduleGroupName) if provided by the client
     if group_name:
         matched_by_group = []
         for row in all_schedules:
-            row_group = get_field_insensitive(
-                row, 
-                ["schedulegroupname", "schedule_group_name", "group_name", "group"]
-            )
+            row_group = get_field_insensitive(row, ["schedulegroupname", "schedule_group_name", "group_name", "group"])
             if row_group.lower() == group_name.lower():
                 matched_by_group.append(row)
-        
         if matched_by_group:
             return matched_by_group
 
-    # 💡 2. Fallback: Filter by department and semester case-insensitively
     matched_by_filters = []
     for row in all_schedules:
-        row_dept = get_field_insensitive(
-            row, 
-            ["department", "programme", "dept", "branch", "course"]
-        )
-        row_sem = get_field_insensitive(
-            row, 
-            ["semester", "sem"]
-        )
-        
+        row_dept = get_field_insensitive(row, ["department", "programme", "dept", "branch", "course"])
+        row_sem = get_field_insensitive(row, ["semester", "sem"])
         if row_dept.lower() == department.lower() and row_sem.lower() == semester.lower():
             matched_by_filters.append(row)
 
     return matched_by_filters
 
+@app.get("/api/schedule/groups")
+async def get_schedule_groups(token: str):
+    await get_current_user(token)
+    response = supabase.table("Weekly Schedules").select("ScheduleGroupName").execute()
+    groups = list(set([row.get("ScheduleGroupName") for row in response.data if row.get("ScheduleGroupName")]))
+    return groups
+
+@app.get("/api/profile/sync")
+async def sync_profile(token: str):
+    user = await get_current_user(token)
+    response = supabase.table("StudentDetails").select("*").eq("Roll_No", user["roll_number"]).execute()
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Student record not found.")
+    return response.data[0]
+
 @app.get("/api/directory/staff")
 async def fetch_staff_directory(token: str):
-    user = await get_current_user(token) # Ensure authenticated
+    await get_current_user(token)
     try:
         response = supabase.table("staff_directory").select("*").execute()
         return response.data
@@ -296,50 +348,38 @@ async def fetch_staff_directory(token: str):
 
 @app.get("/api/library/books")
 async def fetch_library_books(token: str):
-    user = await get_current_user(token) # Ensure authenticated
+    await get_current_user(token)
     try:
         response = supabase.table("library_books").select("*").execute()
         return response.data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# -------------------------------------------------------------------------
+# 6. FIREBASE NOTIFICATION DISPATCHER
+# -------------------------------------------------------------------------
 @app.post("/api/notifications/send")
 async def send_push_notification(title: str, body: str, target_device_token: str):
     try:
-        # Construct the notification payload
         message = messaging.Message(
-            notification=messaging.Notification(
-                title=title,
-                body=body,
-            ),
-            # You can also pass hidden data to the app here
+            notification=messaging.Notification(title=title, body=body),
             data={"click_action": "FLUTTER_NOTIFICATION_CLICK", "type": "chat_alert"},
-            token=target_device_token, # The specific phone to send to
+            token=target_device_token,
         )
-
-        # Fire it off to Firebase
         response = messaging.send(message)
-        
         return {"success": True, "message_id": response}
-    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send notification: {str(e)}")
 
 @app.post("/api/notifications/broadcast")
 async def broadcast_notification(title: str, body: str, topic: str):
     try:
-        # Construct the message targeting a topic instead of a token
         message = messaging.Message(
-            notification=messaging.Notification(
-                title=title,
-                body=body,
-            ),
-            topic=topic, # Firebase sends this to ALL devices subscribed to this topic
+            notification=messaging.Notification(title=title, body=body),
+            topic=topic,
         )
-
         response = messaging.send(message)
         return {"success": True, "message_id": response}
-    
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

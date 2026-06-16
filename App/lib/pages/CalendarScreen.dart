@@ -1,5 +1,7 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart'; // Required for compute() background thread processing
+import 'dart:async'; // 💡 Added for TimeoutException handling
+import 'dart:io'; // 💡 Added for SocketException handling
+import 'package:flutter/foundation.dart'; 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -54,7 +56,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   Future<void> _loadInitialSubscriptionAndData() async {
     final sub = await AuthService.getSubscribedSchedule();
-    // 💡 FIXED: Strictly convert empty strings to null to ensure proper state resets
+    // 💡 Strictly convert empty strings to null to ensure proper state resets
     final validSub = (sub != null && sub.isNotEmpty) ? sub : null;
     
     if (mounted) {
@@ -114,7 +116,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final String? jsonStr = prefs.getString('offline_cache_monthly_calendar');
     if (jsonStr == null) return null;
-    return compute(_isolateJsonDecodeList, jsonStr); // 💡 Offloaded
+    return compute(_isolateJsonDecodeList, jsonStr); 
   }
 
   Future<void> _saveScheduleToCache(String groupName, List<Map<String, dynamic>> classesList) async {
@@ -126,7 +128,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final String? jsonStr = prefs.getString('offline_cache_schedule_$groupName');
     if (jsonStr == null) return null;
-    return compute(_isolateJsonDecodeList, jsonStr); // 💡 Offloaded
+    return compute(_isolateJsonDecodeList, jsonStr); 
   }
 
   Future<void> _initializeScheduleAndCalendar(String? groupName) async {
@@ -135,7 +137,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       _errorMessage = null;
     });
 
-    // 💡 FIXED: Instantly wipe any lingering classes from memory to guarantee ghost caches never display
+    // 💡 Instantly wipe any lingering classes from memory to guarantee ghost caches never display
     _distributeClasses([]);
 
     List<Map<String, dynamic>>? cachedClasses;
@@ -148,7 +150,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     if (cachedClasses != null) _distributeClasses(cachedClasses);
     if (cachedCalendar != null) _indexMonthlyEvents(cachedCalendar);
 
-    // Stop loading if we have the caches we require
+    // Stop loading early if we have the caches we require
     final bool hasNeededCache = (groupName == null || cachedClasses != null) && (cachedCalendar != null);
     
     if (hasNeededCache) {
@@ -214,7 +216,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final String semester = user?.semester ?? '4';
     final String? token = await AuthService.getAuthToken();
 
-    // Sync Weekly Classes ONLY if the user is actively subscribed
+    // 💡 Task 1: Sync Weekly Classes ONLY if the user is actively subscribed
     if (groupName != null && groupName.isNotEmpty) {
       try {
         final url = Uri.parse(
@@ -224,10 +226,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
           '&group_name=${Uri.encodeComponent(groupName)}'
         );
 
+        // 💡 SECURE BACKEND CALL WITH TIMEOUT
         final response = await http.get(url, headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
-        });
+        }).timeout(const Duration(seconds: 15));
 
         if (response.statusCode == 200) {
           final List<Map<String, dynamic>> responseData = await compute(_isolateJsonDecodeList, response.body);
@@ -244,21 +247,27 @@ class _CalendarScreenState extends State<CalendarScreen> {
             weeklySuccess = true;
           }
         }
+      } on SocketException catch (_) {
+        debugPrint("⚠️ Live schedule sync failed: No Internet Connection");
+      } on TimeoutException catch (_) {
+        debugPrint("⚠️ Live schedule sync failed: Connection Timeout");
       } catch (e) {
         debugPrint("⚠️ Live schedule sync failed: $e");
       }
     } else {
-      // Flag as successful if we actively verified the user is Unassigned
+      // Flag as successful if we actively verified the user is intentionally Unassigned
       weeklySuccess = true;
     }
 
-    // Sync Monthly Calendar Events regardless of group subscription
+    // 💡 Task 2: Sync Monthly Calendar Events regardless of group subscription
     try {
       final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/schedule/fetch?department=Calendar&semester=Events');
+      
+      // 💡 SECURE BACKEND CALL WITH TIMEOUT
       final response = await http.get(url, headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
-      });
+      }).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
         final List<Map<String, dynamic>> calendarResponse = await compute(_isolateJsonDecodeList, response.body);
@@ -268,10 +277,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
           calendarSuccess = true;
         }
       }
+    } on SocketException catch (_) {
+      debugPrint("⚠️ Live monthly calendar sync failed: No Internet Connection");
+    } on TimeoutException catch (_) {
+      debugPrint("⚠️ Live monthly calendar sync failed: Connection Timeout");
     } catch (e) {
       debugPrint("⚠️ Live monthly calendar sync failed: $e");
     }
 
+    // Wrap Up UI State Updates
     if (mounted) {
       setState(() { _isLoading = false; });
       if (weeklySuccess || calendarSuccess) {
@@ -282,7 +296,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       } else {
         if (_dailyClasses.values.any((list) => list.isNotEmpty) || _monthlyEvents.isNotEmpty) {
           if (isManualRefresh || isSilentBackgroundSync) {
-            _showOfflineToast('Unable to connect to internet.', isError: true);
+            _showOfflineToast('Unable to connect to internet. Viewing offline data.', isError: true);
           }
         } else {
           setState(() {

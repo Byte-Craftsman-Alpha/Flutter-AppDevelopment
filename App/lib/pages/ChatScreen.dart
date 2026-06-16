@@ -1,8 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -21,25 +21,21 @@ class ChatGroupPage extends StatefulWidget {
   State<ChatGroupPage> createState() => _ChatGroupPageState();
 }
 
-class _ChatGroupPageState extends State<ChatGroupPage>
-    with TickerProviderStateMixin {
+class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateMixin {
   final TextEditingController _msgController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   List<Map<String, dynamic>> _messagesList = [];
   bool _isSyncing = true;
   bool _isUploadingFile = false;
-  RealtimeChannel? _chatChannelSubscription;
+  
+  // 💡 Lightweight polling timer to replace direct Supabase WebSockets
+  Timer? _pollingTimer;
 
   // 💡 Replying & Editing message trackers
   Map<String, dynamic>? _replyingToMessage;
   Map<String, dynamic>? _editingMessage;
 
-  final FlutterLocalNotificationsPlugin _localNotifications =
-      FlutterLocalNotificationsPlugin();
-
-  static const String _telegramBotToken = "7705422769:AAE9Litq4FezGMrTYRzHuyi8SYUMgcxckkI";
-  static const String _telegramChatId = "-1003952897986";
-
+  final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
   final Map<String, String> _resolvedFileUrls = {};
 
   @override
@@ -47,29 +43,33 @@ class _ChatGroupPageState extends State<ChatGroupPage>
     super.initState();
     _initializeNotifications();
     _fetchHistoricalMessages();
-    _connectRealtimeBroadcast();
+    _startBackgroundSyncPolling();
   }
 
   @override
   void dispose() {
     _msgController.dispose();
     _scrollController.dispose();
-    if (_chatChannelSubscription != null) {
-      Supabase.instance.client.removeChannel(_chatChannelSubscription!);
-    }
+    _pollingTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _initializeNotifications() async {
-    const AndroidInitializationSettings androidSettings =
-        AndroidInitializationSettings('app_icon');
+  void _startBackgroundSyncPolling() {
+    // 💡 Intelligently poll the secure backend every 4 seconds to simulate real-time chat
+    _pollingTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!_isUploadingFile && mounted) {
+        _fetchHistoricalMessages(isBackgroundSync: true);
+      }
+    });
+  }
 
-    const DarwinInitializationSettings iosSettings =
-        DarwinInitializationSettings(
-          requestAlertPermission: true,
-          requestBadgePermission: true,
-          requestSoundPermission: true,
-        );
+  Future<void> _initializeNotifications() async {
+    const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('app_icon');
+    const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
 
     const InitializationSettings initSettings = InitializationSettings(
       android: androidSettings,
@@ -82,230 +82,90 @@ class _ChatGroupPageState extends State<ChatGroupPage>
         debugPrint("Notification tapped: ${response.payload}");
       },
     );
-
-    final androidImplementation = _localNotifications
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >();
-    if (androidImplementation != null) {
-      const AndroidNotificationChannel channel = AndroidNotificationChannel(
-        'group_chat_channel',
-        'Group Chats',
-        description: 'Real-time university group chat notifications',
-        importance: Importance.max,
-        playSound: true,
-        enableVibration: true,
-        showBadge: true,
-      );
-      await androidImplementation.createNotificationChannel(channel);
-      await androidImplementation.requestNotificationsPermission();
-    }
-
-    final iosImplementation = _localNotifications
-        .resolvePlatformSpecificImplementation<
-          IOSFlutterLocalNotificationsPlugin
-        >();
-    if (iosImplementation != null) {
-      await iosImplementation.requestPermissions(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
-    }
   }
 
-  Future<void> _triggerNativeNotification(
-    String senderName,
-    String messageBody,
-  ) async {
-    const AndroidNotificationDetails androidDetails =
-        AndroidNotificationDetails(
-          'group_chat_channel',
-          'Group Chats',
-          channelDescription: 'Real-time university group chat notifications',
-          importance: Importance.max,
-          priority: Priority.high,
-          showWhen: true,
-          playSound: true,
-        );
-
-    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-
-    const NotificationDetails platformDetails = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
-    await _localNotifications.show(
-      id: DateTime.now().millisecondsSinceEpoch % 100000,
-      title: senderName,
-      body: messageBody,
-      notificationDetails: platformDetails,
-      payload: 'group_chat_payload',
-    );
-  }
-
-  Future<void> _fetchHistoricalMessages() async {
+  // 💡 Securely fetches history from YOUR backend, NOT direct Supabase
+  Future<void> _fetchHistoricalMessages({bool isBackgroundSync = false}) async {
     try {
-      final List<dynamic> data = await Supabase.instance.client
-          .from('GroupChats')
-          .select()
-          .order('created_at', ascending: false)
-          .limit(100);
+      final token = await AuthService.getAuthToken();
+      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/chat/history?token=$token');
+      
+      final response = await http.get(url);
 
-      if (mounted) {
-        setState(() {
-          _messagesList = data.map((e) {
-            final Map<String, dynamic> msg = Map<String, dynamic>.from(e);
-            msg['sendingStatus'] = 'sent';
-            return msg;
-          }).toList();
-          _isSyncing = false;
-        });
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        
+        if (mounted) {
+          setState(() {
+            // 💡 Preserve optimistic UI "sending" states so they don't flicker away
+            final sendingMessages = _messagesList.where((m) => m['sendingStatus'] == 'sending').toList();
+            
+            final fetchedMessages = data.map((e) {
+              final Map<String, dynamic> msg = Map<String, dynamic>.from(e);
+              msg['sendingStatus'] = 'sent';
+              // Keep ui_key stable for flawless list updates
+              msg['ui_key'] = msg['id']; 
+              return msg;
+            }).toList();
+
+            _messagesList = [...sendingMessages, ...fetchedMessages];
+            _isSyncing = false;
+          });
+        }
       }
     } catch (e) {
       debugPrint("❌ Chat sync exception: $e");
     }
   }
 
-  void _connectRealtimeBroadcast() {
-    _chatChannelSubscription = Supabase.instance.client
-        .channel('public:GroupChats')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'GroupChats',
-          callback: (payload) {
-            final newRow = payload.newRecord;
-            final oldRow = payload.oldRecord;
-            final eventType = payload.eventType;
-
-            if (mounted) {
-              setState(() {
-                if (eventType == PostgresChangeEvent.insert && newRow.isNotEmpty) {
-                  final incomingSenderId = newRow['sender_id']?.toString();
-
-                  // 💡 SEAMLESS MORPHING: Locate the optimistic message
-                  final int tempIndex = _messagesList.indexWhere((msg) =>
-                      msg['sendingStatus'] == 'sending' &&
-                      msg['message_body'] == newRow['message_body'] &&
-                      msg['sender_id'] == incomingSenderId
-                  );
-
-                  if (tempIndex != -1) {
-                    final tempMsg = _messagesList[tempIndex];
-                    final Map<String, dynamic> msg = Map<String, dynamic>.from(newRow);
-                    
-                    msg['sendingStatus'] = 'sent';
-                    
-                    // 💡 PREVENT WIDGET UNMOUNT: Lock the UI Key to the original Temp ID
-                    msg['ui_key'] = tempMsg['id'];
-
-                    // 💡 PREVENT NETWORK RELOAD: Directly propagate the local physical path
-                    final oldMeta = tempMsg['attachment_meta'];
-                    if (oldMeta != null && oldMeta is Map && oldMeta['local_path'] != null) {
-                      Map<String, dynamic>? newMeta;
-                      if (msg['attachment_meta'] is String) {
-                        try { newMeta = Map<String, dynamic>.from(json.decode(msg['attachment_meta'])); } catch (_) {}
-                      } else if (msg['attachment_meta'] is Map) {
-                        newMeta = Map<String, dynamic>.from(msg['attachment_meta']);
-                      }
-                      
-                      if (newMeta != null) {
-                        newMeta['local_path'] = oldMeta['local_path'];
-                        msg['attachment_meta'] = newMeta;
-                      }
-                    }
-
-                    _messagesList[tempIndex] = msg; // 💡 Perfect in-place replacement
-                  } else {
-                    final Map<String, dynamic> msg = Map<String, dynamic>.from(newRow);
-                    msg['sendingStatus'] = 'sent';
-                    _messagesList.insert(0, msg);
-                  }
-
-                  if (incomingSenderId != widget.currentUserId) {
-                    final senderName = newRow['sender_name'] ?? 'Classmate';
-                    final messageBody = newRow['message_body'] ?? '';
-                    _triggerNativeNotification(senderName, messageBody);
-                  }
-                } else if (eventType == PostgresChangeEvent.update && newRow.isNotEmpty) {
-                  final int index = _messagesList.indexWhere((m) => m['id'] == newRow['id']);
-                  if (index != -1) {
-                    final Map<String, dynamic> updatedMsg = Map<String, dynamic>.from(newRow);
-                    updatedMsg['sendingStatus'] = 'sent';
-                    updatedMsg['ui_key'] = _messagesList[index]['ui_key']; // Preserve keys on edits
-                    _messagesList[index] = updatedMsg;
-                  }
-                } else if (eventType == PostgresChangeEvent.delete && oldRow.isNotEmpty) {
-                  _messagesList.removeWhere((m) => m['id'] == oldRow['id']);
-                }
-              });
-            }
-          },
-        );
-
-    _chatChannelSubscription!.subscribe((status, [error]) {
-      if (status.name == 'subscribed' || status.toString().contains('subscribed')) {
-        _fetchHistoricalMessages();
-      }
-    });
-  }
-
-  Future<String?> _uploadFileToTelegram(String path, String name) async {
-    final uri = Uri.parse(
-      "https://api.telegram.org/bot$_telegramBotToken/sendDocument",
-    );
-    final request = http.MultipartRequest("POST", uri)
-      ..fields['chat_id'] = _telegramChatId
-      ..files.add(
-        await http.MultipartFile.fromPath('document', path, filename: name),
-      );
-
+  // 💡 Secure File Upload: Routes to your backend instead of Telegram directly
+  Future<String?> _uploadFileToBackend(String path, String name) async {
     try {
+      final token = await AuthService.getAuthToken();
+      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/chat/upload_file');
+      
+      final request = http.MultipartRequest("POST", url)
+        ..fields['token'] = token ?? ''
+        ..files.add(await http.MultipartFile.fromPath('file', path, filename: name));
+
       final response = await request.send();
       final responseBody = await http.Response.fromStream(response);
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> decoded = json.decode(responseBody.body);
-        if (decoded['ok'] == true) {
-          return decoded['result']['document']['file_id']?.toString();
+        if (decoded['success'] == true) {
+          return decoded['file_id']?.toString();
         }
       }
     } catch (e) {
-      debugPrint("❌ Telegram Network Upload Exception: $e");
+      debugPrint("❌ Backend Network Upload Exception: $e");
     }
     return null;
   }
 
-  Future<String?> _resolveTelegramFileId(String fileId) async {
+  // 💡 Secure Link Resolution: Routes to your backend instead of Telegram directly
+  Future<String?> _resolveCloudFileId(String fileId) async {
     if (_resolvedFileUrls.containsKey(fileId)) {
       return _resolvedFileUrls[fileId];
     }
 
-    final uri = Uri.parse(
-      "https://api.telegram.org/bot$_telegramBotToken/getFile?file_id=$fileId",
-    );
     try {
-      final response = await http.get(uri);
+      final token = await AuthService.getAuthToken();
+      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/files/resolve?file_id=$fileId&token=$token');
+      
+      final response = await http.get(url);
+      
       if (response.statusCode == 200) {
         final Map<String, dynamic> decoded = json.decode(response.body);
-        if (decoded['ok'] == true) {
-          final filePath = decoded['result']['file_path']?.toString();
-          if (filePath != null) {
-            final fileUrl =
-                "https://api.telegram.org/file/bot$_telegramBotToken/$filePath";
-            _resolvedFileUrls[fileId] = fileUrl;
-            return fileUrl;
-          }
+        final fileUrl = decoded['url']?.toString();
+        
+        if (fileUrl != null) {
+          _resolvedFileUrls[fileId] = fileUrl;
+          return fileUrl;
         }
       }
     } catch (e) {
-      debugPrint("❌ Failed to resolve Telegram path: $e");
+      debugPrint("❌ Failed to resolve cloud path: $e");
     }
     return null;
   }
@@ -313,7 +173,6 @@ class _ChatGroupPageState extends State<ChatGroupPage>
   Future<void> _handleAttachmentSelection() async {
     if (_isUploadingFile) return; 
 
-    // Safe MIUI focus detachment
     final currentFocus = FocusManager.instance.primaryFocus;
     if (currentFocus != null && currentFocus.hasFocus) {
       currentFocus.unfocus();
@@ -331,11 +190,7 @@ class _ChatGroupPageState extends State<ChatGroupPage>
 
       if (result == null || result.files.single.path == null) return;
 
-      if (mounted) {
-        setState(() {
-          _isUploadingFile = true;
-        });
-      }
+      if (mounted) setState(() => _isUploadingFile = true);
 
       final pickedFile = result.files.single;
       final localPath = pickedFile.path!;
@@ -352,6 +207,7 @@ class _ChatGroupPageState extends State<ChatGroupPage>
         'created_at': DateTime.now().toUtc().toIso8601String(),
         'has_attachment': true,
         'sendingStatus': 'sending',
+        'ui_key': 'temp_${DateTime.now().millisecondsSinceEpoch}',
         'attachment_meta': {
           'file_name': filename,
           'file_size': pickedFile.size,
@@ -362,13 +218,12 @@ class _ChatGroupPageState extends State<ChatGroupPage>
       };
 
       if (mounted) {
-        setState(() {
-          _messagesList.insert(0, optimisticAttachmentMsg);
-        });
+        setState(() => _messagesList.insert(0, optimisticAttachmentMsg));
         _scrollToBottom();
       }
 
-      final fileId = await _uploadFileToTelegram(localPath, filename);
+      // 💡 Upload securely through our API gateway
+      final fileId = await _uploadFileToBackend(localPath, filename);
 
       if (fileId != null) {
         final token = await AuthService.getAuthToken();
@@ -389,18 +244,18 @@ class _ChatGroupPageState extends State<ChatGroupPage>
           }),
         );
 
-        if (response.statusCode != 200) {
+        if (response.statusCode == 200) {
+          _fetchHistoricalMessages(); // Re-sync to get official DB row
+        } else {
           throw Exception("API Gateway returned ${response.statusCode}");
         }
       } else {
         if (mounted) {
           setState(() {
-            _messagesList.removeWhere(
-              (msg) => msg['attachment_meta']?['file_id'] == '_local_uploading_id',
-            );
+            _messagesList.removeWhere((msg) => msg['attachment_meta']?['file_id'] == '_local_uploading_id');
           });
         }
-        throw Exception("Telegram failed to host file payload.");
+        throw Exception("Backend failed to host file payload.");
       }
     } on PlatformException catch (pe) {
       if (!mounted) return;
@@ -409,14 +264,10 @@ class _ChatGroupPageState extends State<ChatGroupPage>
           SnackBar(
             backgroundColor: Colors.redAccent.shade700,
             content: const Text(
-              'No compatible File Manager found. Please install a file explorer app (e.g., Google Files) to pick attachments.',
+              'No compatible File Manager found. Please install a file explorer app to pick attachments.',
               style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
             ),
           ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Native Picker Error: ${pe.message}')),
         );
       }
     } catch (e) {
@@ -425,11 +276,7 @@ class _ChatGroupPageState extends State<ChatGroupPage>
         SnackBar(content: Text('Failed to transmit attachment: ${e.toString()}')),
       );
     } finally {
-      if (mounted) {
-        setState(() {
-          _isUploadingFile = false;
-        });
-      }
+      if (mounted) setState(() => _isUploadingFile = false);
     }
   }
 
@@ -440,10 +287,7 @@ class _ChatGroupPageState extends State<ChatGroupPage>
     _msgController.clear();
 
     final rawReplyId = _replyingToMessage?['id'];
-    final dynamic replyToId = (rawReplyId is String)
-        ? int.tryParse(rawReplyId) ?? rawReplyId
-        : rawReplyId;
-
+    final dynamic replyToId = (rawReplyId is String) ? int.tryParse(rawReplyId) ?? rawReplyId : rawReplyId;
     final replyToName = _replyingToMessage?['sender_name'];
     final replyToBody = _replyingToMessage?['message_body'];
 
@@ -459,6 +303,7 @@ class _ChatGroupPageState extends State<ChatGroupPage>
       'has_attachment': false,
       'attachment_meta': null,
       'sendingStatus': 'sending',
+      'ui_key': 'temp_${DateTime.now().millisecondsSinceEpoch}',
       'reply_to_id': replyToId,
       'reply_to_name': replyToName,
       'reply_to_body': replyToBody,
@@ -487,16 +332,14 @@ class _ChatGroupPageState extends State<ChatGroupPage>
         }),
       );
 
-      if (response.statusCode != 200) {
+      if (response.statusCode == 200) {
+        _fetchHistoricalMessages(isBackgroundSync: true); // Update temp states
+      } else {
         throw Exception("API Gateway returned ${response.statusCode}");
       }
     } catch (e) {
       setState(() {
-        _messagesList.removeWhere(
-          (msg) =>
-              msg['sendingStatus'] == 'sending' &&
-              msg['message_body'] == bodyText,
-        );
+        _messagesList.removeWhere((msg) => msg['sendingStatus'] == 'sending' && msg['message_body'] == bodyText);
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to transmit message payload. Details: $e')),
@@ -504,15 +347,13 @@ class _ChatGroupPageState extends State<ChatGroupPage>
     }
   }
 
+  // 💡 Secure Edit: Routes to backend wrapper
   Future<void> _updateTextMessage() async {
     final updatedText = _msgController.text.trim();
     if (updatedText.isEmpty || _editingMessage == null) return;
 
     final targetMessage = _editingMessage!;
-    final rawMessageId = targetMessage['id'];
-    final dynamic messageId = (rawMessageId is String)
-        ? int.tryParse(rawMessageId) ?? rawMessageId
-        : rawMessageId;
+    final messageId = targetMessage['id'];
 
     _msgController.clear();
 
@@ -526,25 +367,27 @@ class _ChatGroupPageState extends State<ChatGroupPage>
     });
 
     try {
-      await Supabase.instance.client
-          .from('GroupChats')
-          .update({'message_body': updatedText, 'is_edited': true})
-          .eq('id', messageId);
+      final token = await AuthService.getAuthToken();
+      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/chat/update');
+      
+      final response = await http.put(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'message_id': messageId,
+          'new_body': updatedText,
+          'token': token
+        }),
+      );
+      
+      if (response.statusCode != 200) throw Exception();
     } catch (e) {
-      try {
-        await Supabase.instance.client
-            .from('GroupChats')
-            .update({'message_body': updatedText})
-            .eq('id', messageId);
-      } catch (fallbackError) {
-        _fetchHistoricalMessages();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to apply message modifications.')),
-        );
-      }
+      _fetchHistoricalMessages();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to apply message modifications.')));
     }
   }
 
+  // 💡 Secure Delete: Routes to backend wrapper
   Future<void> _deleteMessage(Map<String, dynamic> message) async {
     final messageId = message['id'];
     if (messageId == null) return;
@@ -554,15 +397,14 @@ class _ChatGroupPageState extends State<ChatGroupPage>
     });
 
     try {
-      await Supabase.instance.client
-          .from('GroupChats')
-          .delete()
-          .eq('id', messageId);
+      final token = await AuthService.getAuthToken();
+      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/chat/delete?message_id=$messageId&token=$token');
+      
+      final response = await http.delete(url);
+      if (response.statusCode != 200) throw Exception();
     } catch (e) {
       _fetchHistoricalMessages();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to delete message. Syncing...')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to delete message. Syncing...')));
     }
   }
 
@@ -1026,7 +868,6 @@ class _ChatGroupPageState extends State<ChatGroupPage>
     return processed.join('\n\n');
   }
 
-  // 💡 CORE FLICKER FIX: These stable widget structures permanently prevent Flutter element destruction
   Widget _buildStableImageBubbleCardLocal(String localPath, {bool isUploading = false}) {
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
     return ClipRRect(
@@ -1085,7 +926,6 @@ class _ChatGroupPageState extends State<ChatGroupPage>
     final isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].contains(extension);
     final localPath = meta['local_path'] as String?;
 
-    // 💡 1. PERFECT LOCAL MORPH: Physically unifies the widget tree shape so Flutter doesn't reload it!
     if (localPath != null && File(localPath).existsSync()) {
       final bool isUploading = (sendingStatus == 'sending' || fileId == '_local_uploading_id');
       
@@ -1097,7 +937,6 @@ class _ChatGroupPageState extends State<ChatGroupPage>
       );
     }
 
-    // 2. Active Upload Fallback (Rare - UI state without physical access)
     if (fileId == '_local_uploading_id' || sendingStatus == 'sending') {
       return Container(
         height: 80, padding: const EdgeInsets.all(12), alignment: Alignment.center,
@@ -1113,14 +952,13 @@ class _ChatGroupPageState extends State<ChatGroupPage>
       );
     }
 
-    // 3. Network Resolution (For receiving standard cloud files from others)
     final String? cachedUrl = _resolvedFileUrls[fileId];
     if (cachedUrl != null) {
       return _buildClickableAttachmentCard(fileId, filename, extension, isImage, cachedUrl);
     }
 
     return FutureBuilder<String?>(
-      future: _resolveTelegramFileId(fileId),
+      future: _resolveCloudFileId(fileId),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Container(
@@ -1149,9 +987,7 @@ class _ChatGroupPageState extends State<ChatGroupPage>
     );
   }
 
-  Widget _buildClickableAttachmentCard(
-    String fileId, String filename, String extension, bool isImage, String resolvedUrl,
-  ) {
+  Widget _buildClickableAttachmentCard(String fileId, String filename, String extension, bool isImage, String resolvedUrl) {
     return GestureDetector(
       onTap: () => _openAttachmentActionSheet(fileId, filename, extension, isImage, resolvedUrl, false),
       child: isImage ? _buildImageBubbleCard(resolvedUrl) : _buildStableDocumentBubbleCard(filename, extension, isUploading: false),
@@ -1172,9 +1008,7 @@ class _ChatGroupPageState extends State<ChatGroupPage>
     );
   }
 
-  void _openAttachmentActionSheet(
-    String fileId, String filename, String extension, bool isImage, String resolvedPathOrUrl, [bool isLocal = false]
-  ) {
+  void _openAttachmentActionSheet(String fileId, String filename, String extension, bool isImage, String resolvedPathOrUrl, [bool isLocal = false]) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Theme.of(context).cardColor,
