@@ -143,7 +143,63 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // 💡 Handler when user changes the dropdown value selection
+  // 💡 Confirmation Dialog for Schedule Change
+  void _showScheduleChangeConfirmation(String? newGroupName) {
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+    final dialogTheme = Theme.of(context);
+    
+    final actionText = newGroupName == null ? 'Clear Schedule' : 'Update Schedule';
+    final bodyText = newGroupName == null 
+        ? 'Are you sure you want to unassign your schedule? Your dashboard timetable will be cleared.'
+        : 'Are you sure you want to subscribe to $newGroupName? Your dashboard timetable will be updated to reflect this section.';
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: dialogTheme.cardColor,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
+            side: BorderSide(color: systemExt.borderNeutral),
+          ),
+          title: Text(
+            'Confirm Subscription', 
+            style: dialogTheme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          content: Text(
+            bodyText, 
+            style: dialogTheme.textTheme.bodyMedium,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text(
+                'Cancel', 
+                style: TextStyle(color: EduDesignTokens.slate400, fontWeight: FontWeight.bold),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _handleScheduleChange(newGroupName);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: dialogTheme.primaryColor,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+                ),
+                elevation: 0,
+              ),
+              child: Text(actionText, style: const TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // 💡 Handler when user confirms the dropdown value selection
   Future<void> _handleScheduleChange(String? newGroupName) async {
     setState(() {
       _selectedSchedule = newGroupName;
@@ -180,6 +236,65 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       );
     }
+  }
+
+  // 💡 Confirmation Dialog for User Logout
+  void _showLogoutConfirmation() {
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+    final dialogTheme = Theme.of(context);
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: dialogTheme.cardColor,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
+            side: BorderSide(color: systemExt.borderNeutral),
+          ),
+          title: Text(
+            'Log Out', 
+            style: dialogTheme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          content: Text(
+            'Are you sure you want to log out of your account? You will need your credentials to sign back in.', 
+            style: dialogTheme.textTheme.bodyMedium,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text(
+                'Cancel', 
+                style: TextStyle(color: EduDesignTokens.slate400, fontWeight: FontWeight.bold),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await AuthService.clearSession();
+                if (mounted) {
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (context) => const LoginScreen()),
+                    (route) => false,
+                  );
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: systemExt.btnDangerBg,
+                foregroundColor: systemExt.btnDangerText,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+                  side: BorderSide(color: systemExt.btnDangerBorder),
+                ),
+                elevation: 0,
+              ),
+              child: const Text('Log Out', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -346,7 +461,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                             );
                                           }),
                                         ],
-                                        onChanged: _handleScheduleChange,
+                                        onChanged: (newGroupName) {
+                                          if (newGroupName != _selectedSchedule) {
+                                            _showScheduleChangeConfirmation(newGroupName);
+                                          }
+                                        },
                                       ),
                                     ),
                                   ),
@@ -431,16 +550,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     // Modern Action Logout Submission Button Layout
                     EduComponents.adminDangerButton(
                       context: context,
-                      onPressed: () async {
-                        await AuthService.clearSession();
-                        if (context.mounted) {
-                          Navigator.pushAndRemoveUntil(
-                            context,
-                            MaterialPageRoute(builder: (context) => const LoginScreen()),
-                            (route) => false,
-                          );
-                        }
-                      },
+                      onPressed: _showLogoutConfirmation,
                       child: const Text(
                         'Log Out of Account',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),

@@ -7,6 +7,12 @@ from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, F
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from jose import JWTError, jwt
+import firebase_admin
+from firebase_admin import credentials, messaging
+
+# 💡 Initialize Firebase Admin
+cred = credentials.Certificate("path/to/your/firebase-adminsdk.json")
+firebase_admin.initialize_app(cred)
 
 app = FastAPI(
     title="EduPortal Backend Gateway",
@@ -116,7 +122,7 @@ async def secure_login(payload: dict):
     is_match = (clean_entered == clean_correct and clean_entered != "") or (entered_password == correct_dob)
 
     if not is_match:
-        raise HTTPException(status_code=401, detail="Invalid date of birth password parameters.")
+        raise HTTPException(status_code=401, detail="Invalid password parameters.")
 
     # 💡 Case-Insensitive Extraction for User Properties Mapping
     student_name = get_field_insensitive(student, ["name"], "Student")
@@ -294,6 +300,46 @@ async def fetch_library_books(token: str):
     try:
         response = supabase.table("library_books").select("*").execute()
         return response.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/notifications/send")
+async def send_push_notification(title: str, body: str, target_device_token: str):
+    try:
+        # Construct the notification payload
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=title,
+                body=body,
+            ),
+            # You can also pass hidden data to the app here
+            data={"click_action": "FLUTTER_NOTIFICATION_CLICK", "type": "chat_alert"},
+            token=target_device_token, # The specific phone to send to
+        )
+
+        # Fire it off to Firebase
+        response = messaging.send(message)
+        
+        return {"success": True, "message_id": response}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send notification: {str(e)}")
+
+@app.post("/api/notifications/broadcast")
+async def broadcast_notification(title: str, body: str, topic: str):
+    try:
+        # Construct the message targeting a topic instead of a token
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=title,
+                body=body,
+            ),
+            topic=topic, # Firebase sends this to ALL devices subscribed to this topic
+        )
+
+        response = messaging.send(message)
+        return {"success": True, "message_id": response}
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

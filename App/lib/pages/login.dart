@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:async'; // 💡 Added for TimeoutException handling
+import 'dart:io'; // 💡 Added for SocketException (No Internet) handling
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutty_solar_icons/flutty_solar_icons.dart';
@@ -6,6 +8,7 @@ import '../constants/theme.dart'; // Mapped strictly to your centralized design 
 import '../models/user.dart';
 import '../services/auth_service.dart';
 import 'home.dart'; // Ensure correct import to your dashboard page class
+import 'package:edu_portal/main.dart'; // For global notification helpers and navigatorKey
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -44,6 +47,7 @@ class _LoginScreenState extends State<LoginScreen> {
       // 💡 Secure 3-Tier Architecture Call: Routes credentials directly to your live Vercel Gateway
       final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/auth/login');
       
+      // 💡 Added strict timeout to prevent infinite loading on weak networks
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
@@ -51,10 +55,8 @@ class _LoginScreenState extends State<LoginScreen> {
           'roll_number': rollNumber,
           'password': enteredPassword,
         }),
-      );
+      ).timeout(const Duration(seconds: 15));
 
-      // 💡 Check status code FIRST before attempting to decode response.body as JSON.
-      // This prevents a FormatException crash when the server returns plain text / HTML (like "Internal Server Error") on failure.
       if (response.statusCode == 200) {
         final Map<String, dynamic> responseData = jsonDecode(response.body);
         final Map<String, dynamic> studentData = responseData['user'] ?? {};
@@ -78,11 +80,17 @@ class _LoginScreenState extends State<LoginScreen> {
           gender: studentData['gender']?.toString() ?? '',
           fatherName: studentData['father_name']?.toString() ?? studentData['Father_Name']?.toString() ?? '',
           motherName: studentData['mother_name']?.toString() ?? studentData['Mother_Name']?.toString() ?? '',
-          semester: studentData['semester']?.toString() ?? '4',
+          semester: studentData['semester']?.toString() ?? '',
         );
 
         // 💡 Save user session persistently alongside the secure server-signed JWT token
         await AuthService.saveSession(user, token: jwtToken);
+        unsubscribeFromAllTopics(); // Clear old topic subscriptions to prevent cross-user notification leaks
+        subscribeNotificationTopic(user.rollNumber.toString()); // Subscribe to new user-specific topic for targeted notifications
+        subscribeNotificationTopic(user.semester.toString()); // Subscribe to new semester-specific topic for targeted notifications
+        subscribeNotificationTopic(user.department.toString()); // Subscribe to new department-specific topic for targeted notifications
+        subscribeNotificationTopic(user.category.toString()); // Subscribe to new category-specific topic for targeted notifications
+        subscribeNotificationTopic('general'); // Subscribe to new category-specific topic for targeted notifications
 
         // Route user into main Dashboard and clear history stack
         if (mounted) {
@@ -93,25 +101,31 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           );
         }
-      } else {
-        // 💡 Safely handle non-200 responses without crashing on plain-text errors
-        String errorMessage = 'Server Error (${response.statusCode})';
+      } else if (response.statusCode == 401 || response.statusCode == 404 || response.statusCode == 400) {
+        // 💡 Gracefully handle authentication rejections (Wrong password/username)
+        String errorMessage = 'Invalid credentials. Please check your username and password.';
         try {
           final Map<String, dynamic> responseData = jsonDecode(response.body);
           errorMessage = responseData['detail']?.toString() ?? 
                          responseData['message']?.toString() ?? 
                          errorMessage;
-        } catch (_) {
-          // If response is plain text like "Internal Server Error", extract it safely here
-          if (response.body.isNotEmpty) {
-            errorMessage = response.body.trim();
-          }
-        }
+        } catch (_) {}
         _showErrorSnackBar(errorMessage);
+      } else {
+        // 💡 Gracefully handle Server crashes (500) without showing raw HTML/Code blocks to the user
+        debugPrint('Server Error (${response.statusCode}): ${response.body}');
+        _showErrorSnackBar('Service temporarily unavailable. Please try again later.');
       }
+    } on SocketException catch (_) {
+      // 💡 Specifically catches "No Internet" scenarios before they become unknown errors
+      _showErrorSnackBar('No internet connection. Please check your network and try again.', isLongDuration: true);
+    } on TimeoutException catch (_) {
+      // 💡 Specifically catches weak networks where the server takes too long to reply
+      _showErrorSnackBar('Connection timed out. The server is taking too long to respond.', isLongDuration: true);
     } catch (e) {
-      _showErrorSnackBar('Gateway Connection Error: Unable to communicate with authentication server.\nDetails: $e');
-      debugPrint('❌ Network Exceptions Details: $e');
+      // 💡 Generic fallback for any other mapping/parsing issues. Masks the real error from the UI.
+      debugPrint('❌ Network/Parsing Exceptions Details: $e');
+      _showErrorSnackBar('An unexpected error occurred. Please try again later.');
     } finally {
       if (mounted) {
         setState(() {

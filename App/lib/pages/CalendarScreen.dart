@@ -282,7 +282,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       } else {
         if (_dailyClasses.values.any((list) => list.isNotEmpty) || _monthlyEvents.isNotEmpty) {
           if (isManualRefresh || isSilentBackgroundSync) {
-            _showOfflineToast('Playing offline cached schedule.', isError: true);
+            _showOfflineToast('Unable to connect to internet.', isError: true);
           }
         } else {
           setState(() {
