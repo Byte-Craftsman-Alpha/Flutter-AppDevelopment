@@ -11,7 +11,7 @@ import firebase_admin
 from firebase_admin import credentials, messaging
 
 # 💡 Initialize Firebase Admin
-cred = credentials.Certificate("path/to/your/firebase-adminsdk.json")
+cred = credentials.Certificate("./edu-portal-d0a62-firebase-adminsdk-fbsvc-c0b236157d.json")
 firebase_admin.initialize_app(cred)
 
 app = FastAPI(
