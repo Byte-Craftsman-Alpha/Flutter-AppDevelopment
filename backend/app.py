@@ -325,9 +325,22 @@ async def fetch_academic_schedules(department: str, semester: str, group_name: O
 @app.get("/api/schedule/groups")
 async def get_schedule_groups(token: str):
     await get_current_user(token)
-    response = supabase.table("Weekly Schedules").select("ScheduleGroupName").execute()
-    groups = list(set([row.get("ScheduleGroupName") for row in response.data if row.get("ScheduleGroupName")]))
-    return groups
+    
+    # 💡 FIX: Use select("*") to bypass Supabase's strict case-sensitive URL parsing
+    response = supabase.table("Weekly Schedules").select("*").execute()
+    
+    groups = set()
+    for row in (response.data or []):
+        # 💡 Use the robust case-insensitive parser to find the group name safely
+        group_name = get_field_insensitive(
+            row, 
+            ["schedulegroupname", "schedule_group_name", "group_name", "group"]
+        )
+        
+        if group_name:
+            groups.add(group_name)
+            
+    return sorted(list(groups))
 
 @app.get("/api/profile/sync")
 async def sync_profile(token: str):
