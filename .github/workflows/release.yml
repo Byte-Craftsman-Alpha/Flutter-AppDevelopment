@@ -35,7 +35,7 @@ jobs:
 
       - name: Build APK
         working-directory: App
-        run: flutter build apk --release
+        run: flutter build apk --release --no-tree-shake-icons
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
