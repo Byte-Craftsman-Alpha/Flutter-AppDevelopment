@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutty_solar_icons/flutty_solar_icons.dart';
 import '../constants/theme.dart';
@@ -42,7 +43,7 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
   void initState() {
     super.initState();
     _initializeNotifications();
-    _fetchHistoricalMessages();
+    _loadCacheThenFetch();
     _startBackgroundSyncPolling();
   }
 
@@ -54,8 +55,58 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
     super.dispose();
   }
 
+  // 💡 Load the offline cache first, then quietly sync with the network
+  Future<void> _loadCacheThenFetch() async {
+    await _loadCachedUrls();
+    await _loadCachedMessages();
+    _fetchHistoricalMessages();
+  }
+
+  Future<void> _loadCachedMessages() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedStr = prefs.getString('offline_chat_cache');
+      if (cachedStr != null) {
+        final List<dynamic> decoded = json.decode(cachedStr);
+        if (mounted && _messagesList.isEmpty) {
+          setState(() {
+            _messagesList = decoded.map((e) => Map<String, dynamic>.from(e)).toList();
+            _isSyncing = false; // Show UI instantly
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint("Cache load error: $e");
+    }
+  }
+
+  Future<void> _saveCachedMessages() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('offline_chat_cache', json.encode(_messagesList));
+    } catch (_) {}
+  }
+
+  Future<void> _loadCachedUrls() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedStr = prefs.getString('offline_chat_urls');
+      if (cachedStr != null) {
+        final Map<String, dynamic> decoded = json.decode(cachedStr);
+        _resolvedFileUrls.addAll(decoded.map((k, v) => MapEntry(k, v.toString())));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveCachedUrls() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('offline_chat_urls', json.encode(_resolvedFileUrls));
+    } catch (_) {}
+  }
+
   void _startBackgroundSyncPolling() {
-    // 💡 Intelligently poll the secure backend every 4 seconds to simulate real-time chat
+    // Intelligently poll the secure backend every 4 seconds to simulate real-time chat
     _pollingTimer = Timer.periodic(const Duration(seconds: 4), (_) {
       if (!_isUploadingFile && mounted) {
         _fetchHistoricalMessages(isBackgroundSync: true);
@@ -84,7 +135,7 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
     );
   }
 
-  // 💡 Securely fetches history from YOUR backend, NOT direct Supabase
+  // 💡 Securely fetches history and reconciles with Local Cache to prevent duplicates
   Future<void> _fetchHistoricalMessages({bool isBackgroundSync = false}) async {
     try {
       final token = await AuthService.getAuthToken();
@@ -97,28 +148,86 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
         
         if (mounted) {
           setState(() {
-            // 💡 Preserve optimistic UI "sending" states so they don't flicker away
-            final sendingMessages = _messagesList.where((m) => m['sendingStatus'] == 'sending').toList();
-            
             final fetchedMessages = data.map((e) {
               final Map<String, dynamic> msg = Map<String, dynamic>.from(e);
               msg['sendingStatus'] = 'sent';
-              // Keep ui_key stable for flawless list updates
-              msg['ui_key'] = msg['id']; 
+              // Set a default stable UI key from the DB ID
+              msg['ui_key'] = msg['id'].toString(); 
               return msg;
             }).toList();
 
+            // 1. PRESERVE LOCAL STATE: Map properties from existing cache to new network fetch
+            for (var newMsg in fetchedMessages) {
+              final existingIndex = _messagesList.indexWhere((m) => m['id'].toString() == newMsg['id'].toString());
+              if (existingIndex != -1) {
+                final oldMsg = _messagesList[existingIndex];
+                newMsg['ui_key'] = oldMsg['ui_key'] ?? newMsg['ui_key']; 
+                
+                final oldMeta = oldMsg['attachment_meta'];
+                if (oldMeta != null && oldMeta is Map && oldMeta.containsKey('local_path')) {
+                  var newMeta = newMsg['attachment_meta'];
+                  if (newMeta != null) {
+                    Map<String, dynamic> mutableDbMeta = {};
+                    if (newMeta is String) {
+                      try { mutableDbMeta = Map<String, dynamic>.from(json.decode(newMeta)); } catch (_) {}
+                    } else if (newMeta is Map) {
+                      mutableDbMeta = Map<String, dynamic>.from(newMeta);
+                    }
+                    mutableDbMeta['local_path'] = oldMeta['local_path'];
+                    newMsg['attachment_meta'] = mutableDbMeta;
+                  }
+                }
+              }
+            }
+
+            final sendingMessages = _messagesList.where((m) => m['sendingStatus'] == 'sending').toList();
+
+            // 2. INTELLIGENT MORPHING: Reconcile optimistic UI with Database Truth
+            for (int i = sendingMessages.length - 1; i >= 0; i--) {
+              final pendingMsg = sendingMessages[i];
+              
+              final dbMatchIndex = fetchedMessages.indexWhere((dbMsg) =>
+                  dbMsg['sender_id'].toString() == pendingMsg['sender_id'].toString() &&
+                  dbMsg['message_body'] == pendingMsg['message_body'] &&
+                  dbMsg['has_attachment'] == pendingMsg['has_attachment']
+              );
+
+              if (dbMatchIndex != -1) {
+                fetchedMessages[dbMatchIndex]['ui_key'] = pendingMsg['ui_key'];
+                
+                final pendingMeta = pendingMsg['attachment_meta'];
+                if (pendingMeta != null && pendingMeta is Map && pendingMeta.containsKey('local_path')) {
+                  var dbMeta = fetchedMessages[dbMatchIndex]['attachment_meta'];
+                  if (dbMeta != null) {
+                    Map<String, dynamic> mutableDbMeta = {};
+                    if (dbMeta is String) {
+                      try { mutableDbMeta = Map<String, dynamic>.from(json.decode(dbMeta)); } catch (_) {}
+                    } else if (dbMeta is Map) {
+                      mutableDbMeta = Map<String, dynamic>.from(dbMeta);
+                    }
+                    mutableDbMeta['local_path'] = pendingMeta['local_path'];
+                    fetchedMessages[dbMatchIndex]['attachment_meta'] = mutableDbMeta;
+                  }
+                }
+                
+                sendingMessages.removeAt(i);
+              }
+            }
+
+            // 3. APPLY MERGED ARRAY (Guarantees perfect sequence and zero duplicates)
             _messagesList = [...sendingMessages, ...fetchedMessages];
             _isSyncing = false;
+            
+            _saveCachedMessages(); // Update cache on disk seamlessly
           });
         }
       }
     } catch (e) {
       debugPrint("❌ Chat sync exception: $e");
+      if (mounted) setState(() => _isSyncing = false);
     }
   }
 
-  // 💡 Secure File Upload: Routes to your backend instead of Telegram directly
   Future<String?> _uploadFileToBackend(String path, String name) async {
     try {
       final token = await AuthService.getAuthToken();
@@ -143,8 +252,8 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
     return null;
   }
 
-  // 💡 Secure Link Resolution: Routes to your backend instead of Telegram directly
   Future<String?> _resolveCloudFileId(String fileId) async {
+    // 💡 First check memory cache
     if (_resolvedFileUrls.containsKey(fileId)) {
       return _resolvedFileUrls[fileId];
     }
@@ -161,6 +270,7 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
         
         if (fileUrl != null) {
           _resolvedFileUrls[fileId] = fileUrl;
+          _saveCachedUrls(); // 💡 Save newly resolved URL to disk cache
           return fileUrl;
         }
       }
@@ -222,7 +332,6 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
         _scrollToBottom();
       }
 
-      // 💡 Upload securely through our API gateway
       final fileId = await _uploadFileToBackend(localPath, filename);
 
       if (fileId != null) {
@@ -245,7 +354,7 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
         );
 
         if (response.statusCode == 200) {
-          _fetchHistoricalMessages(); // Re-sync to get official DB row
+          _fetchHistoricalMessages();
         } else {
           throw Exception("API Gateway returned ${response.statusCode}");
         }
@@ -333,7 +442,7 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
       );
 
       if (response.statusCode == 200) {
-        _fetchHistoricalMessages(isBackgroundSync: true); // Update temp states
+        _fetchHistoricalMessages(isBackgroundSync: true); 
       } else {
         throw Exception("API Gateway returned ${response.statusCode}");
       }
@@ -347,7 +456,6 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
     }
   }
 
-  // 💡 Secure Edit: Routes to backend wrapper
   Future<void> _updateTextMessage() async {
     final updatedText = _msgController.text.trim();
     if (updatedText.isEmpty || _editingMessage == null) return;
@@ -381,13 +489,13 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
       );
       
       if (response.statusCode != 200) throw Exception();
+      _saveCachedMessages();
     } catch (e) {
       _fetchHistoricalMessages();
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to apply message modifications.')));
     }
   }
 
-  // 💡 Secure Delete: Routes to backend wrapper
   Future<void> _deleteMessage(Map<String, dynamic> message) async {
     final messageId = message['id'];
     if (messageId == null) return;
@@ -402,6 +510,7 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
       
       final response = await http.delete(url);
       if (response.statusCode != 200) throw Exception();
+      _saveCachedMessages();
     } catch (e) {
       _fetchHistoricalMessages();
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to delete message. Syncing...')));

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
@@ -24,10 +25,14 @@ class VaultPage extends StatefulWidget {
 class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
   List<Map<String, dynamic>> _vaultItems = [];
   bool _isLoading = true;
-  bool _isProcessing = false;
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
   String? _localVaultDirectory;
+
+  // 💡 State flags specifically for operations
+  bool _isUploadingFile = false;
+  http.Client? _activeUploadClient;
+  final Map<String, http.Client> _activeDownloadClients = {};
 
   @override
   void initState() {
@@ -40,6 +45,10 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
   @override
   void dispose() {
     _searchController.dispose();
+    _activeUploadClient?.close();
+    for (var client in _activeDownloadClients.values) {
+      client.close();
+    }
     super.dispose();
   }
 
@@ -54,7 +63,6 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     });
   }
 
-  // 💡 Secure Fetch: Retrieves Vault metadata directly from the backend API
   Future<void> _fetchVaultRecords() async {
     setState(() => _isLoading = true);
     try {
@@ -68,7 +76,6 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
         if (mounted) {
           setState(() {
             _vaultItems = data.map((e) => Map<String, dynamic>.from(e)).toList();
-            // Sort by latest created
             _vaultItems.sort((a, b) => (b['created_at'] ?? '').compareTo(a['created_at'] ?? ''));
             _isLoading = false;
           });
@@ -85,9 +92,9 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     }
   }
 
-  // 💡 Secure Upload: Sends the file to the backend wrapper
+  // 💡 Streamed Secure Upload with Live Progress Dialog
   Future<void> _uploadDocument() async {
-    if (_isProcessing) return;
+    if (_isUploadingFile) return;
 
     try {
       final FilePickerResult? result = await FilePicker.platform.pickFiles(
@@ -97,26 +104,61 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
 
       if (result == null || result.files.single.path == null) return;
 
-      setState(() => _isProcessing = true);
-
       final pickedFile = result.files.single;
-      final localPath = pickedFile.path!;
-      
-      _showToast("Uploading ${pickedFile.name} securely to your vault...", isError: false);
+      final localFile = File(pickedFile.path!);
+      final int totalBytes = await localFile.length();
+
+      setState(() {
+        _isUploadingFile = true;
+        _activeUploadClient = http.Client();
+      });
+
+      _showTransferProgressDialog(
+        title: "Uploading to Vault",
+        fileName: pickedFile.name,
+        totalBytes: totalBytes,
+        isUpload: true,
+        onCancel: () {
+          _activeUploadClient?.close();
+          Navigator.pop(context); // Close dialog
+        },
+      );
 
       final token = await AuthService.getAuthToken();
       final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/vault/upload');
       
-      final request = http.MultipartRequest("POST", url)
-        ..fields['token'] = token ?? ''
-        ..files.add(await http.MultipartFile.fromPath('file', localPath, filename: pickedFile.name));
+      final request = http.MultipartRequest("POST", url);
+      request.fields['token'] = token ?? '';
 
-      final response = await request.send();
+      // Create a stream that monitors upload byte progress
+      int uploadedBytes = 0;
+      final stream = localFile.openRead();
+      final progressStream = stream.transform(
+        StreamTransformer<List<int>, List<int>>.fromHandlers(
+          handleData: (data, sink) {
+            uploadedBytes += data.length;
+            // Notify the dialog locally
+            _transferProgressNotifier.value = TransferProgress(uploadedBytes, totalBytes);
+            sink.add(data);
+          },
+        ),
+      );
+
+      final multipartFile = http.MultipartFile(
+        'file',
+        progressStream,
+        totalBytes,
+        filename: pickedFile.name,
+      );
+      request.files.add(multipartFile);
+
+      final response = await _activeUploadClient!.send(request);
       final responseBody = await http.Response.fromStream(response);
+
+      if (mounted && Navigator.canPop(context)) Navigator.pop(context); // Close dialog
 
       if (response.statusCode == 200) {
         _showToast("File secured in your vault successfully!", isError: false);
-        // Silently refresh the vault to show the new item
         _fetchVaultRecords();
       } else {
         throw Exception("API Gateway returned ${response.statusCode}");
@@ -124,14 +166,18 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     } on PlatformException catch (_) {
       _showToast("File manager access denied. Please allow storage permissions.", isError: true);
     } catch (e) {
-      debugPrint("Vault Upload Error: $e");
-      _showToast("Failed to upload document. Please try again.", isError: true);
+      if (e is http.ClientException) {
+        _showToast("Upload cancelled by user.", isError: true);
+      } else {
+        debugPrint("Vault Upload Error: $e");
+        _showToast("Failed to upload document. Please try again.", isError: true);
+      }
     } finally {
-      if (mounted) setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isUploadingFile = false);
+      _activeUploadClient = null;
     }
   }
 
-  // 💡 Secure Link Resolution: Translates Telegram File ID into Downloadable Link via Backend
   Future<String?> _resolveCloudDownloadUrl(String fileId) async {
     try {
       final token = await AuthService.getAuthToken();
@@ -149,37 +195,75 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     return null;
   }
 
+  // 💡 Streamed Secure Download with Live Progress Dialog
   Future<void> _handleDocumentAction(Map<String, dynamic> item, {bool shareOnly = false}) async {
-    if (_isProcessing) return;
-    setState(() => _isProcessing = true);
+    final String fileId = item['file_id']?.toString() ?? '';
+    final String fileName = item['file_name']?.toString() ?? 'document.file';
+    final int totalSize = item['file_size'] is int ? item['file_size'] : int.tryParse(item['file_size'].toString()) ?? 0;
+    
+    if (_activeDownloadClients.containsKey(fileId)) {
+      _showToast("This file is already being downloaded.", isError: false);
+      return;
+    }
 
     try {
-      final String fileId = item['file_id']?.toString() ?? '';
-      final String fileName = item['file_name']?.toString() ?? 'document.file';
-      
       if (_localVaultDirectory == null) await _initLocalDirectory();
       final String localFilePath = p.join(_localVaultDirectory!, '${item['id']}_$fileName');
       final File localFile = File(localFilePath);
 
       // Check if file is already cached offline
       if (!await localFile.exists()) {
-        _showToast("Downloading $fileName securely...", isError: false);
-        
+        final client = http.Client();
+        setState(() => _activeDownloadClients[fileId] = client);
+
+        _showTransferProgressDialog(
+          title: "Downloading to Cache",
+          fileName: fileName,
+          totalBytes: totalSize,
+          isUpload: false,
+          onCancel: () {
+            client.close();
+            Navigator.pop(context); // Close dialog
+          },
+        );
+
+        // 1. Resolve URL
+        _transferProgressNotifier.value = TransferProgress(0, totalSize, isResolving: true);
         final resolvedUrl = await _resolveCloudDownloadUrl(fileId);
         
         if (resolvedUrl == null) {
+          if (mounted && Navigator.canPop(context)) Navigator.pop(context);
           throw Exception("Could not map file to a secure download path.");
         }
 
-        final response = await http.get(Uri.parse(resolvedUrl));
+        // 2. Stream Data
+        final request = http.Request('GET', Uri.parse(resolvedUrl));
+        final response = await client.send(request);
         
         if (response.statusCode == 200) {
-          await localFile.writeAsBytes(response.bodyBytes);
+          int downloadedBytes = 0;
+          final contentLength = response.contentLength ?? totalSize;
+          
+          final sink = localFile.openWrite();
+          
+          await for (final chunk in response.stream) {
+            sink.add(chunk);
+            downloadedBytes += chunk.length;
+            _transferProgressNotifier.value = TransferProgress(downloadedBytes, contentLength);
+          }
+          
+          await sink.close();
+          if (mounted && Navigator.canPop(context)) Navigator.pop(context); // Close dialog
+
+          // 💡 Trigger UI refresh so the green checkmark instantly appears
+          setState(() {}); 
         } else {
+          if (mounted && Navigator.canPop(context)) Navigator.pop(context);
           throw Exception("Corrupted document stream received.");
         }
       }
 
+      // Execute subsequent action (Open or Share)
       if (shareOnly) {
         await Share.shareXFiles(
           [XFile(localFile.path)],
@@ -192,18 +276,22 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
         }
       }
     } catch (e) {
-      debugPrint("Vault Document Action Error: $e");
-      _showToast("Failed to process document.", isError: true);
+      if (e is http.ClientException) {
+        // Clean up partial file on cancel
+        final String localFilePath = p.join(_localVaultDirectory!, '${item['id']}_$fileName');
+        final partialFile = File(localFilePath);
+        if (await partialFile.exists()) await partialFile.delete();
+        _showToast("Download cancelled.", isError: true);
+      } else {
+        debugPrint("Vault Document Action Error: $e");
+        _showToast("Failed to process document.", isError: true);
+      }
     } finally {
-      if (mounted) setState(() => _isProcessing = false);
+      if (mounted) setState(() => _activeDownloadClients.remove(fileId));
     }
   }
 
-  // 💡 Secure Deletion: Sent to the backend to ensure users can only delete their own files
   Future<void> _handleDocumentPurge(Map<String, dynamic> item) async {
-    if (_isProcessing) return;
-    setState(() => _isProcessing = true);
-
     try {
       final recordId = item['id'].toString();
       final token = await AuthService.getAuthToken();
@@ -212,7 +300,6 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
       final response = await http.delete(url);
 
       if (response.statusCode == 200) {
-        // Also wipe offline cache
         final String fileName = item['file_name']?.toString() ?? 'document';
         if (_localVaultDirectory != null) {
           final File localFile = File(p.join(_localVaultDirectory!, '${item['id']}_$fileName'));
@@ -230,8 +317,6 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     } catch (e) {
       debugPrint("Vault Purge Error: $e");
       _showToast("Failed to delete document from Vault.", isError: true);
-    } finally {
-      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -282,9 +367,10 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
   }
 
   String _formatFileSize(int bytes) {
+    if (bytes <= 0) return '0 B';
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1048576) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / 1048576).toStringAsFixed(1)} MB';
+    return '${(bytes / 1048576).toStringAsFixed(2)} MB';
   }
 
   String _formatDate(String isoString) {
@@ -295,6 +381,130 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     } catch (_) {
       return 'Unknown Date';
     }
+  }
+
+  // 💡 ValueNotifier to broadcast progress smoothly without rebuilding the entire UI
+  final ValueNotifier<TransferProgress> _transferProgressNotifier = ValueNotifier(TransferProgress(0, 1));
+
+  void _showTransferProgressDialog({
+    required String title,
+    required String fileName,
+    required int totalBytes,
+    required bool isUpload,
+    required VoidCallback onCancel,
+  }) {
+    _transferProgressNotifier.value = TransferProgress(0, totalBytes);
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+        
+        return WillPopScope(
+          onWillPop: () async => false, // Prevent dismissing by back button
+          child: Dialog(
+            backgroundColor: Theme.of(context).cardColor,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
+              side: BorderSide(color: systemExt.borderNeutral),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: EduDesignTokens.indigo50.withOpacity(0.2),
+                          shape: BoxShape.circle,
+                        ),
+                        child: EduComponents.icon(
+                          context: context,
+                          iconData: isUpload 
+                            ? const SolarIcon(SolarIcons.UploadSquare, weight: SolarIconWeight.bold)
+                            : const SolarIcon(SolarIcons.CloudDownload, weight: SolarIconWeight.bold),
+                          color: Theme.of(context).primaryColor,
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                            const SizedBox(height: 2),
+                            Text(fileName, style: TextStyle(color: EduDesignTokens.slate400, fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  
+                  ValueListenableBuilder<TransferProgress>(
+                    valueListenable: _transferProgressNotifier,
+                    builder: (context, progress, child) {
+                      final double percent = progress.totalBytes > 0 
+                          ? (progress.currentBytes / progress.totalBytes).clamp(0.0, 1.0) 
+                          : 0.0;
+                          
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                progress.isResolving 
+                                    ? "Negotiating secure tunnel..." 
+                                    : '${_formatFileSize(progress.currentBytes)} / ${_formatFileSize(progress.totalBytes)}',
+                                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: Theme.of(context).textTheme.bodyLarge?.color),
+                              ),
+                              Text(
+                                '${(percent * 100).toInt()}%',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Theme.of(context).primaryColor),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(EduDesignTokens.radiusFull),
+                            child: LinearProgressIndicator(
+                              value: progress.isResolving ? null : percent,
+                              minHeight: 8,
+                              backgroundColor: systemExt.btnSoftBg,
+                              valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).primaryColor),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  
+                  const SizedBox(height: 28),
+                  OutlinedButton(
+                    onPressed: onCancel,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: systemExt.btnDangerText,
+                      side: BorderSide(color: systemExt.btnDangerBorder),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl)),
+                    ),
+                    child: const Text('Cancel Transfer', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -364,7 +574,7 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
                       hintStyle: textTheme.bodyMedium?.copyWith(color: EduDesignTokens.slate400),
                       prefixIcon: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: EduComponents.icon(context: context, iconData: SolarIcon(SolarIcons.Magnifer, weight: SolarIconWeight.outline), color: EduDesignTokens.slate400),
+                        child: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.Magnifer, weight: SolarIconWeight.outline), color: EduDesignTokens.slate400),
                       ),
                       prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
                       border: InputBorder.none,
@@ -396,13 +606,11 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _isProcessing ? null : _uploadDocument,
+        onPressed: _isUploadingFile ? null : _uploadDocument,
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
         elevation: 4,
-        icon: _isProcessing 
-          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-          : EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.UploadSquare, weight: SolarIconWeight.bold), color: Colors.white),
+        icon: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.UploadSquare, weight: SolarIconWeight.bold), color: Colors.white),
         label: const Text('Upload File', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
       ),
     );
@@ -447,12 +655,14 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
     final textTheme = Theme.of(context).textTheme;
     
+    final String fileId = item['file_id']?.toString() ?? '';
     final fileName = item['file_name']?.toString() ?? 'Document';
     final fileSize = _formatFileSize(item['file_size'] as int? ?? 0);
     final date = _formatDate(item['created_at']?.toString() ?? '');
     final extension = item['extension']?.toString().toLowerCase() ?? 'file';
     
     final bool isOffline = _isOfflineCached(item['id'].toString(), fileName);
+    final bool isDownloading = _activeDownloadClients.containsKey(fileId);
 
     SolarIconData getFileIcon() {
       switch (extension) {
@@ -532,7 +742,16 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
                     ],
                   ),
                 ),
-                if (isOffline)
+                if (isDownloading)
+                  Container(
+                    margin: const EdgeInsets.only(left: 8),
+                    padding: const EdgeInsets.all(12),
+                    child: SizedBox(
+                      width: 20, height: 20, 
+                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Theme.of(context).primaryColor)
+                    ),
+                  )
+                else if (isOffline)
                   Container(
                     margin: const EdgeInsets.only(left: 8),
                     padding: const EdgeInsets.all(6),
@@ -661,4 +880,13 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
       },
     );
   }
+}
+
+// Data class to wrap transfer progress
+class TransferProgress {
+  final int currentBytes;
+  final int totalBytes;
+  final bool isResolving;
+  
+  TransferProgress(this.currentBytes, this.totalBytes, {this.isResolving = false});
 }

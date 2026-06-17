@@ -1,5 +1,7 @@
 import 'dart:convert';
-import 'dart:async'; // Added for TimeoutException handling
+import 'dart:async';
+import 'dart:io';
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../constants/widgets.dart';
@@ -11,6 +13,10 @@ import 'package:flutty_solar_icons/flutty_solar_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/data/latest_all.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
+
 import '../constants/theme.dart';
 import '../services/auth_service.dart';
 import '../services/crypto_service.dart';
@@ -31,12 +37,18 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   int _currentIndex = 0;
   bool _isLoading = true;
-  bool _hasSyncError = false; // 💡 Track network failures gracefully
+  bool _hasSyncError = false;
   String _greeting = 'Welcome';
 
   List<Map<String, dynamic>> _todayClasses = [];
   List<Map<String, dynamic>> _todayEvents = [];
   List<Map<String, dynamic>> _recentVaultItems = [];
+
+  // 💡 To-Do Reminders State
+  List<Map<String, dynamic>> _reminders = [];
+  final FlutterLocalNotificationsPlugin _localNotif =
+      FlutterLocalNotificationsPlugin();
+  Timer? _reminderTimer;
 
   int _parseTimeStr(String timeStr) {
     try {
@@ -58,8 +70,23 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
+    tz.initializeTimeZones(); // Initialize timezone DB for background alarms
     _determineGreeting();
     _fetchDashboardContext();
+
+    // Initialize Local Reminders
+    Future.microtask(() async {
+      await _initializeLocalNotif();
+      await _loadReminders();
+      await _syncScheduledNotifications();
+    });
+    _startReminderTimer();
+  }
+
+  @override
+  void dispose() {
+    _reminderTimer?.cancel();
+    super.dispose();
   }
 
   void _determineGreeting() {
@@ -73,7 +100,6 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  // 💡 Centralized Error SnackBar to prevent dead interactions
   void _showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -113,20 +139,24 @@ class _MyHomePageState extends State<MyHomePage> {
       final token = await AuthService.getAuthToken();
       final groupName = await AuthService.getSubscribedSchedule() ?? '';
 
-      // 1. Fetch Latest 4 Vault Documents (With 15s Timeout)
       final vaultUrl = Uri.parse(
         'https://flutter-app-development-mu.vercel.app/api/vault/records?token=$token',
       );
-      final vaultRes = await http.get(vaultUrl).timeout(const Duration(seconds: 15));
+      final vaultRes = await http
+          .get(vaultUrl)
+          .timeout(const Duration(seconds: 15));
 
       if (vaultRes.statusCode == 200) {
         final List<dynamic> records = json.decode(vaultRes.body);
-        final List<Map<String, dynamic>> typedRecords = records.cast<Map<String, dynamic>>();
+        final List<Map<String, dynamic>> typedRecords = records
+            .cast<Map<String, dynamic>>();
 
         typedRecords.sort((a, b) {
-          final dateA = DateTime.tryParse(a['created_at'].toString()) ??
+          final dateA =
+              DateTime.tryParse(a['created_at'].toString()) ??
               DateTime.fromMillisecondsSinceEpoch(0);
-          final dateB = DateTime.tryParse(b['created_at'].toString()) ??
+          final dateB =
+              DateTime.tryParse(b['created_at'].toString()) ??
               DateTime.fromMillisecondsSinceEpoch(0);
           return dateB.compareTo(dateA);
         });
@@ -136,22 +166,26 @@ class _MyHomePageState extends State<MyHomePage> {
         throw Exception('Vault API rejected payload');
       }
 
-      // 2. Fetch Today's Schedule (From Cache)
       if (groupName.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
-        final String? cachedScheduleStr = prefs.getString('offline_cache_schedule_$groupName');
+        final String? cachedScheduleStr = prefs.getString(
+          'offline_cache_schedule_$groupName',
+        );
 
         if (cachedScheduleStr != null) {
           final List<dynamic> rawClassesList = json.decode(cachedScheduleStr);
 
-          final currentDayString = DateFormat('EEEE').format(DateTime.now()).toLowerCase();
+          final currentDayString = DateFormat(
+            'EEEE',
+          ).format(DateTime.now()).toLowerCase();
           final now = DateTime.now();
           final currentMinutes = now.hour * 60 + now.minute;
 
           _todayClasses = rawClassesList
               .map((e) => Map<String, dynamic>.from(e))
               .where((c) {
-                if ((c['day']?.toString().toLowerCase().trim() ?? '') != currentDayString) {
+                if ((c['day']?.toString().toLowerCase().trim() ?? '') !=
+                    currentDayString) {
                   return false;
                 }
                 final timeRange = c['time']?.toString() ?? '';
@@ -165,14 +199,17 @@ class _MyHomePageState extends State<MyHomePage> {
               .toList();
 
           _todayClasses.sort(
-            (a, b) => (a['time'] ?? '').toString().compareTo((b['time'] ?? '').toString()),
+            (a, b) => (a['time'] ?? '').toString().compareTo(
+              (b['time'] ?? '').toString(),
+            ),
           );
         }
       }
 
-      // 3. Fetch Today's Events (From Cache)
       final prefs = await SharedPreferences.getInstance();
-      final String? cachedEventsStr = prefs.getString('offline_cache_monthly_calendar');
+      final String? cachedEventsStr = prefs.getString(
+        'offline_cache_monthly_calendar',
+      );
 
       if (cachedEventsStr != null) {
         final List<dynamic> eventsData = json.decode(cachedEventsStr);
@@ -182,7 +219,8 @@ class _MyHomePageState extends State<MyHomePage> {
         _todayEvents = eventsData
             .map((e) => Map<String, dynamic>.from(e))
             .where((e) {
-              final eventDate = e['Date']?.toString() ?? e['date']?.toString() ?? '';
+              final eventDate =
+                  e['Date']?.toString() ?? e['date']?.toString() ?? '';
               return eventDate == todayString;
             })
             .toList();
@@ -191,14 +229,15 @@ class _MyHomePageState extends State<MyHomePage> {
       debugPrint("❌ Dashboard Sync Error: $e");
       if (mounted) {
         setState(() => _hasSyncError = true);
-        _showErrorSnackBar('Connection failed. Please check your internet and try again.');
+        _showErrorSnackBar(
+          'Connection failed. Please check your internet and try again.',
+        );
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // 💡 Open browser logic natively with graceful exception handling
   Future<void> _launchExternalUrl(String urlString) async {
     try {
       final Uri url = Uri.parse(urlString);
@@ -207,9 +246,673 @@ class _MyHomePageState extends State<MyHomePage> {
       }
     } catch (e) {
       if (mounted) {
-        _showErrorSnackBar('Unable to open the external website. Please try again.');
+        _showErrorSnackBar(
+          'Unable to open the external website. Please try again.',
+        );
       }
     }
+  }
+
+  // =========================================================================
+  // TO-DO REMINDERS & NATIVE OS ALARM SYSTEM
+  // =========================================================================
+
+  Future<void> _initializeLocalNotif() async {
+    tz.initializeTimeZones();
+
+    try {
+      final String timezone = await FlutterTimezone.getLocalTimezone();
+
+      tz.setLocalLocation(tz.getLocation(timezone));
+    } catch (e) {
+      debugPrint("Timezone init failed: $e");
+    }
+
+    const AndroidInitializationSettings androidSettings =
+        AndroidInitializationSettings('ic_launcher');
+
+    const DarwinInitializationSettings iosSettings =
+        DarwinInitializationSettings();
+
+    const InitializationSettings initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
+
+    await _localNotif.initialize(settings: initSettings);
+
+    const AndroidNotificationChannel reminderChannel =
+        AndroidNotificationChannel(
+          'task_reminders_channel',
+          'Task Reminders',
+          description: 'Alerts for upcoming student tasks',
+          importance: Importance.max,
+        );
+
+    await _localNotif
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(reminderChannel);
+
+    final androidPlatform = _localNotif
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+
+    if (androidPlatform != null) {
+      await androidPlatform.requestNotificationsPermission();
+
+      try {
+        await androidPlatform.requestExactAlarmsPermission();
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _loadReminders() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final str = prefs.getString('offline_custom_reminders');
+      if (str != null) {
+        final List<dynamic> decoded = json.decode(str);
+        setState(() {
+          _reminders = decoded
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+          _sortReminders();
+        });
+      }
+    } catch (e) {
+      debugPrint("Error loading reminders: $e");
+    }
+  }
+
+  Future<void> _saveReminders() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'offline_custom_reminders',
+        json.encode(_reminders),
+      );
+      await _syncScheduledNotifications(); // Sync OS Alarms when saving
+    } catch (e) {
+      debugPrint("Error saving reminders: $e");
+    }
+  }
+
+  Future<void> _syncScheduledNotifications() async {
+    await _localNotif.cancelAll(); // Wipe all old pending alarms
+
+    final now = DateTime.now();
+    for (int i = 0; i < _reminders.length; i++) {
+      final r = _reminders[i];
+      if (r['is_completed'] == true) continue;
+
+      final rTime = DateTime.tryParse(r['datetime'] ?? '');
+      if (rTime != null && rTime.isAfter(now)) {
+        final duration = rTime.difference(now);
+        final scheduledTZDate = tz.TZDateTime.from(rTime, tz.local);
+
+        const notifDetails = NotificationDetails(
+          android: AndroidNotificationDetails(
+            'task_reminders_channel',
+            'Task Reminders',
+            channelDescription: 'Alerts for upcoming student tasks',
+            importance: Importance.max,
+            priority: Priority.high,
+            icon: 'launcher_icon',
+          ),
+        );
+
+        final int notifId = r['id'].hashCode.abs() % 100000;
+
+        try {
+          // 💡 Attempt exact scheduling first (requires Android 14 permission)
+          await _localNotif.zonedSchedule(
+            id: notifId,
+            title: r['title'] ?? 'Task Reminder',
+            body: r['description'] ?? 'Scheduled task deadline reached.',
+            scheduledDate: scheduledTZDate,
+            notificationDetails: notifDetails,
+            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          );
+        } catch (e) {
+          // 💡 Fallback to inexact scheduling if exact permission was denied
+          // Ensures the app never crashes while still setting up the alarm
+          await _localNotif.zonedSchedule(
+            id: notifId,
+            title: r['title'] ?? 'Task Reminder',
+            body: r['description'] ?? 'Scheduled task deadline reached.',
+            scheduledDate: scheduledTZDate,
+            notificationDetails: notifDetails,
+            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          );
+        }
+        debugPrint(
+          "Reminder scheduled => "
+          "${r['title']} at $scheduledTZDate",
+        );
+      }
+    }
+    final pending = await _localNotif.pendingNotificationRequests();
+
+    debugPrint("Pending notifications count: ${pending.length}");
+  }
+
+  void _sortReminders() {
+    _reminders.sort((a, b) {
+      if (a['is_completed'] != b['is_completed']) {
+        return a['is_completed'] ? 1 : -1;
+      }
+      final dateA = DateTime.tryParse(a['datetime'] ?? '') ?? DateTime.now();
+      final dateB = DateTime.tryParse(b['datetime'] ?? '') ?? DateTime.now();
+      return dateA.compareTo(dateB);
+    });
+  }
+
+  void _startReminderTimer() {
+    // 💡 Active Lightweight Polling purely for UI State Updates
+    // Notifications are handled completely natively by OS alarms now.
+    _reminderTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
+      final now = DateTime.now();
+      bool changed = false;
+
+      for (int i = 0; i < _reminders.length; i++) {
+        final r = _reminders[i];
+        if (r['is_completed'] == true) continue;
+        if (r['notified'] == true) continue;
+
+        final rTime = DateTime.tryParse(r['datetime'] ?? '');
+        if (rTime != null && now.isAfter(rTime)) {
+          _reminders[i]['notified'] = true;
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        await _saveReminders();
+        if (mounted) setState(() {});
+      }
+    });
+  }
+
+  void _toggleReminderComplete(String id) {
+    setState(() {
+      final index = _reminders.indexWhere((r) => r['id'] == id);
+      if (index != -1) {
+        _reminders[index]['is_completed'] =
+            !(_reminders[index]['is_completed'] ?? false);
+        _sortReminders();
+        _saveReminders();
+      }
+    });
+  }
+
+  void _deleteReminder(String id) {
+    setState(() {
+      _reminders.removeWhere((r) => r['id'] == id);
+      _saveReminders();
+    });
+  }
+
+  void _showAddEditReminderModal([Map<String, dynamic>? existingReminder]) {
+    final theme = Theme.of(context);
+    final systemExt = theme.extension<EduPortalThemeExtension>()!;
+
+    final TextEditingController titleController = TextEditingController(
+      text: existingReminder?['title'] ?? '',
+    );
+    final TextEditingController descController = TextEditingController(
+      text: existingReminder?['description'] ?? '',
+    );
+
+    DateTime selectedDate =
+        existingReminder != null && existingReminder['datetime'] != null
+        ? DateTime.tryParse(existingReminder['datetime']) ?? DateTime.now()
+        : DateTime.now();
+
+    TimeOfDay selectedTime =
+        existingReminder != null && existingReminder['datetime'] != null
+        ? TimeOfDay.fromDateTime(
+            DateTime.tryParse(existingReminder['datetime']) ?? DateTime.now(),
+          )
+        : TimeOfDay.now();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+              ),
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: theme.cardColor,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(EduDesignTokens.radius3xl),
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 24),
+                        decoration: BoxDecoration(
+                          color: EduDesignTokens.slate300,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    Text(
+                      existingReminder == null
+                          ? 'Create New Task'
+                          : 'Edit Task',
+                      style: theme.textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 20),
+
+                    TextField(
+                      controller: titleController,
+                      style: theme.textTheme.bodyLarge,
+                      decoration: InputDecoration(
+                        labelText: 'Task Title',
+                        filled: true,
+                        fillColor: systemExt.btnSoftBg,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(
+                            EduDesignTokens.radiusXl,
+                          ),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    TextField(
+                      controller: descController,
+                      style: theme.textTheme.bodyLarge,
+                      maxLines: 2,
+                      decoration: InputDecoration(
+                        labelText: 'Description (Optional)',
+                        filled: true,
+                        fillColor: systemExt.btnSoftBg,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(
+                            EduDesignTokens.radiusXl,
+                          ),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    Row(
+                      children: [
+                        Expanded(
+                          child: InkWell(
+                            onTap: () async {
+                              final date = await showDatePicker(
+                                context: context,
+                                initialDate: selectedDate,
+                                firstDate: DateTime.now().subtract(
+                                  const Duration(days: 1),
+                                ),
+                                lastDate: DateTime(2030),
+                              );
+                              if (date != null)
+                                setModalState(() => selectedDate = date);
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 14,
+                                horizontal: 12,
+                              ),
+                              decoration: BoxDecoration(
+                                color: systemExt.btnSoftBg,
+                                borderRadius: BorderRadius.circular(
+                                  EduDesignTokens.radiusXl,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.calendar_today_rounded,
+                                    size: 18,
+                                    color: theme.primaryColor,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    DateFormat(
+                                      'MMM dd, yyyy',
+                                    ).format(selectedDate),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: InkWell(
+                            onTap: () async {
+                              final time = await showTimePicker(
+                                context: context,
+                                initialTime: selectedTime,
+                              );
+                              if (time != null)
+                                setModalState(() => selectedTime = time);
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 14,
+                                horizontal: 12,
+                              ),
+                              decoration: BoxDecoration(
+                                color: systemExt.btnSoftBg,
+                                borderRadius: BorderRadius.circular(
+                                  EduDesignTokens.radiusXl,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.access_time_rounded,
+                                    size: 18,
+                                    color: theme.primaryColor,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    selectedTime.format(context),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+
+                    ElevatedButton(
+                      onPressed: () {
+                        if (titleController.text.trim().isEmpty) return;
+
+                        final finalDateTime = DateTime(
+                          selectedDate.year,
+                          selectedDate.month,
+                          selectedDate.day,
+                          selectedTime.hour,
+                          selectedTime.minute,
+                        );
+
+                        setState(() {
+                          if (existingReminder != null) {
+                            final index = _reminders.indexWhere(
+                              (r) => r['id'] == existingReminder['id'],
+                            );
+                            if (index != -1) {
+                              _reminders[index] = {
+                                'id': existingReminder['id'],
+                                'title': titleController.text.trim(),
+                                'description': descController.text.trim(),
+                                'datetime': finalDateTime.toIso8601String(),
+                                'is_completed':
+                                    existingReminder['is_completed'],
+                                'notified':
+                                    finalDateTime.isBefore(DateTime.now())
+                                    ? true
+                                    : false,
+                              };
+                            }
+                          } else {
+                            _reminders.add({
+                              'id': DateTime.now().millisecondsSinceEpoch
+                                  .toString(),
+                              'title': titleController.text.trim(),
+                              'description': descController.text.trim(),
+                              'datetime': finalDateTime.toIso8601String(),
+                              'is_completed': false,
+                              'notified': finalDateTime.isBefore(DateTime.now())
+                                  ? true
+                                  : false,
+                            });
+                          }
+                          _sortReminders();
+                          _saveReminders(); // Automatically triggers the native OS alarm sync
+                        });
+                        Navigator.pop(context);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: theme.primaryColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                            EduDesignTokens.radiusXl,
+                          ),
+                        ),
+                      ),
+                      child: Text(
+                        existingReminder == null ? 'Save Task' : 'Update Task',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildRemindersSection() {
+    final theme = Theme.of(context);
+    final systemExt = theme.extension<EduPortalThemeExtension>()!;
+
+    if (_reminders.isEmpty) {
+      return EduComponents.card(
+        context: context,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
+          child: Center(
+            child: Column(
+              children: [
+                const SolarIcon(
+                  SolarIcons.ChecklistMinimalistic,
+                  color: EduDesignTokens.slate300,
+                  size: 40,
+                ),
+                const SizedBox(height: 12),
+                Text('No Pending Tasks', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  'Add custom reminders or to-dos to keep track of your goals.',
+                  style: theme.textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: _reminders.map((task) {
+        final isCompleted = task['is_completed'] == true;
+        final dateTime =
+            DateTime.tryParse(task['datetime'] ?? '') ?? DateTime.now();
+        final timeString = DateFormat('MMM dd, hh:mm a').format(dateTime);
+        final isPastDue = dateTime.isBefore(DateTime.now()) && !isCompleted;
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          child: EduComponents.card(
+            context: context,
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
+              leading: InkWell(
+                onTap: () => _toggleReminderComplete(task['id']),
+                borderRadius: BorderRadius.circular(EduDesignTokens.radiusFull),
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: isCompleted
+                        ? EduDesignTokens.emerald500
+                        : Colors.transparent,
+                    border: Border.all(
+                      color: isCompleted
+                          ? EduDesignTokens.emerald500
+                          : EduDesignTokens.slate300,
+                      width: 2,
+                    ),
+                    shape: BoxShape.circle,
+                  ),
+                  child: isCompleted
+                      ? const Icon(
+                          Icons.check_rounded,
+                          color: Colors.white,
+                          size: 18,
+                        )
+                      : null,
+                ),
+              ),
+              title: Text(
+                task['title'] ?? 'Task',
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  decoration: isCompleted ? TextDecoration.lineThrough : null,
+                  color: isCompleted
+                      ? EduDesignTokens.slate400
+                      : theme.textTheme.bodyLarge?.color,
+                ),
+              ),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if ((task['description'] ?? '').isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4.0),
+                      child: Text(
+                        task['description'],
+                        style: TextStyle(
+                          decoration: isCompleted
+                              ? TextDecoration.lineThrough
+                              : null,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.access_time_rounded,
+                        size: 12,
+                        color: isCompleted
+                            ? EduDesignTokens.slate400
+                            : (isPastDue
+                                  ? EduDesignTokens.rose700
+                                  : theme.primaryColor),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        timeString,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: isCompleted
+                              ? EduDesignTokens.slate400
+                              : (isPastDue
+                                    ? EduDesignTokens.rose700
+                                    : theme.primaryColor),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              trailing: PopupMenuButton<String>(
+                icon: const Icon(
+                  Icons.more_vert_rounded,
+                  color: EduDesignTokens.slate400,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+                ),
+                color: theme.cardColor,
+                onSelected: (value) {
+                  if (value == 'edit') {
+                    _showAddEditReminderModal(task);
+                  } else if (value == 'delete') {
+                    _deleteReminder(task['id']);
+                  }
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'edit',
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.edit_rounded,
+                          size: 18,
+                          color: theme.primaryColor,
+                        ),
+                        const SizedBox(width: 8),
+                        const Text('Edit'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.delete_rounded,
+                          size: 18,
+                          color: systemExt.btnDangerText,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Delete',
+                          style: TextStyle(color: systemExt.btnDangerText),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
   }
 
   // =========================================================================
@@ -285,15 +988,17 @@ class _MyHomePageState extends State<MyHomePage> {
                                   if (decryptedMap != null) {
                                     _showScannedStudentDetails(decryptedMap);
                                   } else {
-                                    _showErrorSnackBar('Invalid or Foreign QR Code Detected!');
+                                    _showErrorSnackBar(
+                                      'Invalid or Foreign QR Code Detected!',
+                                    );
                                   }
                                 }
                               },
                             )
                           : Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: StudentIdCard(),
-                          ),
+                              padding: const EdgeInsets.all(8.0),
+                              child: StudentIdCard(),
+                            ),
                     ),
 
                     Padding(
@@ -441,13 +1146,13 @@ class _MyHomePageState extends State<MyHomePage> {
   // =========================================================================
   // ASYNC MODALS FOR DIRECTORY AND LIBRARY
   // =========================================================================
-  Future<Map<String, List<Map<String, dynamic>>>> _fetchStaffFromBackend() async {
+  Future<Map<String, List<Map<String, dynamic>>>>
+  _fetchStaffFromBackend() async {
     try {
       final token = await AuthService.getAuthToken() ?? '';
       final url = Uri.parse(
         'https://flutter-app-development-mu.vercel.app/api/directory/staff?token=$token',
       );
-      // 💡 Added strict timeout to prevent infinite modal hanging
       final response = await http.get(url).timeout(const Duration(seconds: 15));
       if (response.statusCode == 200) {
         final List<dynamic> raw = json.decode(response.body);
@@ -502,7 +1207,9 @@ class _MyHomePageState extends State<MyHomePage> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: isDark ? EduDesignTokens.indigo50.withOpacity(0.15) : EduDesignTokens.indigo50.withOpacity(0.1),
+                      color: isDark
+                          ? EduDesignTokens.indigo50.withOpacity(0.15)
+                          : EduDesignTokens.indigo50.withOpacity(0.1),
                       shape: BoxShape.circle,
                     ),
                     child: SolarIcon(
@@ -527,7 +1234,6 @@ class _MyHomePageState extends State<MyHomePage> {
                     );
                   }
                   if (snapshot.hasError) {
-                    // 💡 Gracefully handle the error UI to match existing styles
                     return const Center(
                       child: Padding(
                         padding: EdgeInsets.all(24.0),
@@ -535,7 +1241,7 @@ class _MyHomePageState extends State<MyHomePage> {
                           "Unable to connect to the directory. Please check your internet connection.",
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: EduDesignTokens.rose700, 
+                            color: EduDesignTokens.rose700,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
@@ -673,14 +1379,13 @@ class _MyHomePageState extends State<MyHomePage> {
       final url = Uri.parse(
         'https://flutter-app-development-mu.vercel.app/api/library/books?token=$token',
       );
-      // 💡 Added strict timeout to prevent infinite modal hanging
       final response = await http.get(url).timeout(const Duration(seconds: 15));
       if (response.statusCode == 200) {
         return List<Map<String, dynamic>>.from(json.decode(response.body));
       }
       throw Exception('Server rejected payload');
     } catch (e) {
-      debugPrint('Library Sync Error: $e');
+      debugPrint('Resources Sync Error: $e');
       throw Exception('Connection timeout or network error');
     }
   }
@@ -723,7 +1428,9 @@ class _MyHomePageState extends State<MyHomePage> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: isDark ? EduDesignTokens.emerald50.withOpacity(0.15) : EduDesignTokens.emerald50.withOpacity(0.1),
+                      color: isDark
+                          ? EduDesignTokens.emerald50.withOpacity(0.15)
+                          : EduDesignTokens.emerald50.withOpacity(0.1),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
@@ -732,7 +1439,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     ),
                   ),
                   const SizedBox(width: 16),
-                  Text('E-Library Portal', style: theme.textTheme.titleLarge),
+                  Text('E-Resource Portal', style: theme.textTheme.titleLarge),
                 ],
               ),
             ),
@@ -748,15 +1455,14 @@ class _MyHomePageState extends State<MyHomePage> {
                     );
                   }
                   if (snapshot.hasError) {
-                    // 💡 Gracefully handle the error UI to match existing styles
                     return const Center(
                       child: Padding(
                         padding: EdgeInsets.all(24.0),
                         child: Text(
-                          "Unable to connect to the library. Please check your internet connection.",
+                          "Unable to connect to the Resources. Please check your internet connection.",
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: EduDesignTokens.rose700, 
+                            color: EduDesignTokens.rose700,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
@@ -767,7 +1473,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   final books = snapshot.data ?? [];
                   if (books.isEmpty) {
                     return const Center(
-                      child: Text("Library is currently empty."),
+                      child: Text("Resources is currently empty."),
                     );
                   }
 
@@ -1041,7 +1747,7 @@ class _MyHomePageState extends State<MyHomePage> {
         ),
         actionTile(
           Icons.menu_book_rounded,
-          'Library',
+          'Resources',
           EduDesignTokens.emerald500,
           _showLibraryModal,
         ),
@@ -1055,7 +1761,8 @@ class _MyHomePageState extends State<MyHomePage> {
           Icons.public,
           'Website',
           EduDesignTokens.purple600,
-          () => _launchExternalUrl('https://erp.ddugu.ac.in/student_login.aspx'),
+          () =>
+              _launchExternalUrl('https://erp.ddugu.ac.in/student_login.aspx'),
         ),
       ],
     );
@@ -1212,7 +1919,6 @@ class _MyHomePageState extends State<MyHomePage> {
                 const SizedBox(height: 12),
                 Text('Schedule Cleared!', style: theme.textTheme.titleMedium),
                 const SizedBox(height: 4),
-                // 💡 Conditionally show error message if the fetch failed securely
                 Text(
                   _hasSyncError
                       ? 'Unable to sync schedule due to a network error. Pull down to refresh.'
@@ -1446,7 +2152,6 @@ class _MyHomePageState extends State<MyHomePage> {
                 const SizedBox(height: 12),
                 Text('Vault is Empty', style: theme.textTheme.titleMedium),
                 const SizedBox(height: 4),
-                // 💡 Conditionally show error message if the fetch failed securely
                 Text(
                   _hasSyncError
                       ? 'Unable to sync vault due to a network error. Pull down to refresh.'
@@ -1589,7 +2294,40 @@ class _MyHomePageState extends State<MyHomePage> {
                   _buildCampusWifiCard(),
                   const SizedBox(height: 32),
 
-                  // 5. Cloud Storage Synchronization Stream
+                  // 💡 5. NEW: To-Do Tasks & Reminders Section
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        "Tasks & Reminders",
+                        style: textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => _showAddEditReminderModal(),
+                        icon: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Theme.of(
+                              context,
+                            ).primaryColor.withOpacity(0.15),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.add_task_rounded,
+                            color: Theme.of(context).primaryColor,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  _buildRemindersSection(),
+                  const SizedBox(height: 32),
+
+                  // 6. Cloud Storage Synchronization Stream
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
