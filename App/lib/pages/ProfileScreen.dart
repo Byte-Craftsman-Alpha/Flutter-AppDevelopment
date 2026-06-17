@@ -389,7 +389,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           const Divider(height: 24, thickness: 1),
                           _buildProfileRow('Mobile Number', _extractField(['mobile', 'mobile_no', 'phone'])),
                           const Divider(height: 24, thickness: 1),
-                          _buildProfileRow('Enrollment No.', _extractField(['enrollment_no', 'enrollment'])),
+                          _buildProfileRow('Enrollment No.', _extractField(['enrollment_no', 'enrollment', 'enrollmentNo'])),
                         ],
                       ),
                     ),

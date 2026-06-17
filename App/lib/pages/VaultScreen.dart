@@ -850,6 +850,7 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     final String fileId = item['file_id']?.toString() ?? '';
     final fileName = item['file_name']?.toString() ?? 'Document';
     final fileSize = _formatFileSize(item['file_size'] as int? ?? 0);
+    // Restored the date formatter
     final date = _formatDate(item['created_at']?.toString() ?? '');
     final extension = item['extension']?.toString().toLowerCase() ?? 'file';
 
@@ -877,154 +878,131 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
           return SolarIcons.File;
       }
     }
-    
+
+    Widget buildTrailingWidget() {
+      if (isDownloading) {
+        return SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(
+            strokeWidth: 2.5,
+            color: theme.primaryColor,
+          ),
+        );
+      } else if (isOffline) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            EduComponents.icon(
+              context: context,
+              iconData: const SolarIcon(
+                SolarIcons.CheckCircle,
+                weight: SolarIconWeight.bold,
+              ),
+              color: EduDesignTokens.emerald500,
+              size: 18,
+            ),
+            const SizedBox(width: 8),
+            EduComponents.icon(
+              context: context,
+              iconData: const SolarIcon(
+                SolarIcons.AltArrowRight,
+                weight: SolarIconWeight.outline,
+              ),
+              color: EduDesignTokens.slate400,
+              size: 18,
+            ),
+          ],
+        );
+      } else {
+        return IconButton(
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          onPressed: () => _handleDocumentAction(item),
+          icon: EduComponents.icon(
+            context: context,
+            iconData: const SolarIcon(
+              SolarIcons.Download,
+              weight: SolarIconWeight.outline,
+            ),
+            color: theme.primaryColor,
+            size: 24,
+          ),
+        );
+      }
+    }
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
-        border: Border.all(color: systemExt.borderNeutral),
-        boxShadow: systemExt.cardBaseShadow,
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
+      margin: const EdgeInsets.only(bottom: 8),
+      child: EduComponents.card(
+        context: context,
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 4,
+          ),
           onTap: () => _handleDocumentAction(item),
           onLongPress: () => _showVaultActionSheet(item),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
+          leading: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: systemExt.btnSoftBg,
+              borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+            ),
+            child: EduComponents.icon(
+              context: context,
+              iconData: SolarIcon(
+                getFileIcon(),
+                weight: SolarIconWeight.outline,
+              ),
+              color: systemExt.btnSoftText,
+              size: 24,
+            ),
+          ),
+          title: Text(
+            fileName,
+            style: textTheme.bodyLarge?.copyWith(
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          // Integrated the date into the subtitle row
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 4.0),
             child: Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: systemExt.btnSoftBg,
-                    borderRadius: BorderRadius.circular(
-                      EduDesignTokens.radiusXl,
-                    ),
-                    border: Border.all(color: systemExt.borderNeutral),
-                  ),
-                  child: EduComponents.icon(
-                    context: context,
-                    iconData: SolarIcon(
-                      getFileIcon(),
-                      weight: SolarIconWeight.outline,
-                    ),
-                    color: Theme.of(context).primaryColor,
-                    size: 32,
-                  ),
+                Text(
+                  '${extension.toUpperCase()} · $fileSize',
+                  style: textTheme.bodyMedium?.copyWith(fontSize: 11),
                 ),
-                const SizedBox(width: 16),
+                const SizedBox(width: 8),
+                EduComponents.icon(
+                  context: context,
+                  iconData: const SolarIcon(
+                    SolarIcons.ClockCircle,
+                    weight: SolarIconWeight.outline,
+                  ),
+                  size: 11,
+                  color: EduDesignTokens.slate400,
+                ),
+                const SizedBox(width: 4),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        fileName,
-                        style: textTheme.bodyLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          EduComponents.badge(
-                            backgroundColor: EduDesignTokens.slate100,
-                            textColor: EduDesignTokens.slate500,
-                            child: Text(
-                              extension.toUpperCase(),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 8,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '•  $fileSize',
-                            style: textTheme.labelSmall?.copyWith(
-                              color: EduDesignTokens.slate400,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          EduComponents.icon(
-                            context: context,
-                            iconData: const SolarIcon(
-                              SolarIcons.ClockCircle,
-                              weight: SolarIconWeight.outline,
-                            ),
-                            size: 12,
-                            color: EduDesignTokens.slate400,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            date,
-                            style: textTheme.labelSmall?.copyWith(
-                              color: EduDesignTokens.slate400,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                  child: Text(
+                    date,
+                    style: textTheme.bodyMedium?.copyWith(
+                      fontSize: 11,
+                      color: EduDesignTokens.slate400,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                if (isDownloading)
-                  Container(
-                    margin: const EdgeInsets.only(left: 8),
-                    padding: const EdgeInsets.all(12),
-                    child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        color: Theme.of(context).primaryColor,
-                      ),
-                    ),
-                  )
-                else if (isOffline)
-                  Container(
-                    margin: const EdgeInsets.only(left: 8),
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: EduDesignTokens.emerald50.withOpacity(0.2),
-                      shape: BoxShape.circle,
-                    ),
-                    child: EduComponents.icon(
-                      context: context,
-                      iconData: const SolarIcon(
-                        SolarIcons.CheckCircle,
-                        weight: SolarIconWeight.bold,
-                      ),
-                      color: EduDesignTokens.emerald500,
-                      size: 20,
-                    ),
-                  )
-                else
-                  IconButton(
-                    onPressed: () => _handleDocumentAction(item),
-                    icon: EduComponents.icon(
-                      context: context,
-                      iconData: const SolarIcon(
-                        SolarIcons.Download,
-                        weight: SolarIconWeight.outline,
-                      ),
-                      color: Theme.of(context).primaryColor,
-                    ),
-                  ),
               ],
             ),
           ),
+          trailing: buildTrailingWidget(),
         ),
       ),
     );
