@@ -3,7 +3,11 @@ name: Build & Publish APK Release
 on:
   push:
     tags:
-      - 'v*' # Triggers automatically whenever you push a tag starting with 'v' (e.g., v1.0.1)
+      - 'v*' # Triggers automatically whenever you push a tag starting with 'v'
+
+# 💡 NEW: Explicit permission needed to upload files to GitHub Releases
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -11,38 +15,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Check out the repository source code
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # Step 2: Set up Java environment needed for Android building
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      # Step 3: Set up Flutter environment
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
 
-      # Step 4: Install dependencies
       - name: Install Dependencies
+        # 💡 NEW: Tells the server to go into the 'App' folder first
+        working-directory: App
         run: flutter pub get
 
-      # Step 5: Build the release APK
       - name: Build APK
-        run: flutter build apk --release --no-tree-shake-icons
+        # 💡 NEW: Tells the server to build from inside the 'App' folder
+        working-directory: App
+        run: flutter build apk --release
 
-      # Step 6: Automatically create a GitHub Release and attach the APK asset
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: build/app/outputs/flutter-apk/app-release.apk
+          # 💡 NEW: Updated the path to look inside the 'App' folder for the final output
+          files: App/build/app/outputs/flutter-apk/app-release.apk
           name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Provided automatically by GitHub
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
