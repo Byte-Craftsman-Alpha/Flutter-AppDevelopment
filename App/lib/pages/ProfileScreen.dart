@@ -25,7 +25,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isScheduleLoading = true;
   bool _isSyncingProfile = false;
   
-  // 💡 Local state cache to hold freshly synced backend data without breaking AuthService structures
+  // 💡 Local state cache to hold freshly synced backend data
   Map<String, dynamic>? _liveUserData;
 
   // 💡 App Version State Variables
@@ -34,9 +34,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String _appPackage = '';
 
   // 💡 Update Control Variables
+  bool _isCheckingForUpdate = false;
   bool _updateAvailable = false;
   String _latestVersion = '';
   String _releaseNotes = '';
+  String _upToDateMessage = ''; // Holds the "already latest" message
   bool _isDownloading = false;
   double _downloadProgress = 0.0;
   int _downloadedBytes = 0;
@@ -66,7 +68,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _initializeProfileData() async {
-    // Load local schedule preference first for immediate UI rendering
     final localSub = await AuthService.getSubscribedSchedule();
     if (mounted) {
       setState(() {
@@ -74,17 +75,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
       });
     }
 
-    // Securely fetch available groups, live profile, and check for app updates from backend
+    // Securely fetch available groups and live profile
     await Future.wait([
       _fetchAvailableSchedules(),
       _syncLiveProfile(silent: true),
-      _checkForUpdates(),
     ]);
   }
 
-  // 💡 SECURE ROUTE: Check for APK updates dynamically via Backend API
-  Future<void> _checkForUpdates() async {
+  // 💡 MANUAL ROUTE: Check for APK updates (No JWT Auth Required)
+  Future<void> _manualCheckForUpdates() async {
+    setState(() {
+      _isCheckingForUpdate = true;
+      _upToDateMessage = '';
+      _updateAvailable = false;
+    });
+
     try {
+      // Direct call to gateway without auth wrapper
       final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/app/details');
       final response = await http.get(url).timeout(const Duration(seconds: 10));
       
@@ -95,23 +102,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
         PackageInfo packageInfo = await PackageInfo.fromPlatform();
         int currentVersionCode = int.tryParse(packageInfo.buildNumber) ?? 0;
         
-        // If the backend has a higher version code, an update is ready!
-        if (latestVersionCode > currentVersionCode) {
-          if (mounted) {
+        if (mounted) {
+          if (latestVersionCode > currentVersionCode) {
             setState(() {
               _updateAvailable = true;
               _latestVersion = data['version_name'] ?? 'Unknown';
               _releaseNotes = data['release_notes'] ?? '';
             });
+          } else {
+            setState(() {
+              _upToDateMessage = 'The app installed (v$_appVersion) is the latest version. No newer versions are released yet, stay tuned!';
+            });
           }
         }
+      } else {
+        throw Exception("Server Error");
       }
     } catch (e) {
       debugPrint("App update check failed: $e");
+      if (mounted) {
+        _showToast("Failed to connect to update server.", isError: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCheckingForUpdate = false);
+      }
     }
   }
 
-  // 💡 APP UPDATER: Start downloading the latest APK into external storage and trigger install
+  // 💡 APP UPDATER: Persistent Download & Install
   Future<void> _downloadAndInstallUpdate() async {
     setState(() {
       _isDownloading = true;
@@ -130,9 +149,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
 
       _totalBytes = response.contentLength ?? 0;
+      
+      // 💡 Persist to External Storage: Prevents deletion on restart.
+      // Saving as 'EduPortal_Update.apk' guarantees that every new download 
+      // overwrites the old one, preventing storage clutter!
       final dir = await getExternalStorageDirectory();
-      final filePath = '${dir!.path}/EduPortal_v$_latestVersion.apk';
+      final filePath = '${dir!.path}/EduPortal_Update.apk';
       final file = File(filePath);
+      
+      // Clear incomplete fragments if they exist
+      if (await file.exists()) {
+        await file.delete();
+      }
+      
       final sink = file.openWrite();
 
       response.stream.listen(
@@ -153,10 +182,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           if (mounted) {
             setState(() {
               _isDownloading = false;
-              _updateAvailable = false; // Hide panel post-download
+              _updateAvailable = false; 
             });
             _showToast("Download Complete. Launching Installer...", isError: false);
           }
+          // Launch the Android Installer
           await OpenFile.open(filePath);
         },
         onError: (e) async {
@@ -177,7 +207,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // Helper to format byte sizes into KB, MB, GB gracefully
   String _formatBytes(int bytes) {
     if (bytes <= 0) return "0 B";
     const suffixes = ["B", "KB", "MB", "GB"];
@@ -185,17 +214,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return '${(bytes / pow(1024, i)).toStringAsFixed(1)} ${suffixes[i]}';
   }
 
-  // 💡 SECURE ROUTE: Fetch Schedule Groups from Middleware, NOT Supabase
+  // ... (Keep existing fetch and sync methods exactly as they are)
   Future<void> _fetchAvailableSchedules() async {
     if (!mounted) return;
     setState(() => _isScheduleLoading = true);
-
     try {
       final token = await AuthService.getAuthToken();
       final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/schedule/groups?token=$token');
-      
       final response = await http.get(url).timeout(const Duration(seconds: 10));
-
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         if (mounted) {
@@ -205,8 +231,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           });
         }
       }
-    } on SocketException catch (_) {
-      debugPrint("Offline mode: Cannot fetch schedule groups.");
     } catch (e) {
       debugPrint("Schedule fetch error: $e");
     } finally {
@@ -214,23 +238,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // 💡 SECURE ROUTE: Sync Profile data through Backend Wrapper
   Future<void> _syncLiveProfile({bool silent = false}) async {
     if (_isSyncingProfile) return;
     if (!silent && mounted) setState(() => _isSyncingProfile = true);
-
     try {
       final token = await AuthService.getAuthToken();
       final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/profile/sync?token=$token');
-      
       final response = await http.get(url).timeout(const Duration(seconds: 15));
-
       if (response.statusCode == 200) {
         final Map<String, dynamic> liveData = json.decode(response.body);
         if (mounted) {
-          setState(() {
-            _liveUserData = liveData;
-          });
+          setState(() => _liveUserData = liveData);
           if (!silent) _showToast("Profile synchronized securely.", isError: false);
         }
       } else if (!silent) {
@@ -252,19 +270,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await AuthService.saveSubscribedSchedule(newValue);
       _showToast("Timetable updated to $newValue", isError: false);
     } else {
-      // Pass an empty string instead of using a non-existent clear method
       await AuthService.saveSubscribedSchedule('');
       _showToast("Timetable subscription removed", isError: false);
     }
   }
 
   Future<void> _handleLogout() async {
-    // Directly clear local cache to log the user out and avoid missing method errors
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
-    
     if (!mounted) return;
-    
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (context) => const LoginScreen()),
       (route) => false,
@@ -274,7 +288,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _showToast(String message, {bool isError = true}) {
     if (!mounted) return;
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
-    
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -290,32 +303,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Expanded(
               child: Text(
                 message, 
-                style: TextStyle(
-                  fontWeight: FontWeight.w600, 
-                  fontSize: 13, 
-                  color: isError ? systemExt.btnDangerText : Colors.white
-                ),
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: isError ? systemExt.btnDangerText : Colors.white),
               ),
             ),
           ],
         ),
         backgroundColor: isError ? systemExt.btnDangerBg : EduDesignTokens.slate900,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl)),
         margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         duration: const Duration(seconds: 3),
       ),
     );
   }
 
-  // 💡 Robust helper to extract fields from the backend JSON regardless of column case
   String _extractField(List<String> keys, {String defaultVal = "Not provided"}) {
     if (_liveUserData == null) return defaultVal;
-    
     final lowerCaseMap = _liveUserData!.map((key, value) => MapEntry(key.toLowerCase().trim(), value));
-    
     for (String k in keys) {
       final normalizedKey = k.toLowerCase().trim();
       if (lowerCaseMap.containsKey(normalizedKey) && lowerCaseMap[normalizedKey] != null) {
@@ -331,7 +335,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
     final textTheme = Theme.of(context).textTheme;
 
-    // Extract Display Data Safely
     final userName = _extractField(['name', 'student_name'], defaultVal: AuthService.currentUser?.name ?? "Student");
     final userRoll = _extractField(['roll_no', 'roll_number'], defaultVal: AuthService.currentUser?.rollNumber ?? "");
     final userDept = _extractField(['department', 'programme', 'branch'], defaultVal: AuthService.currentUser?.department ?? "");
@@ -512,11 +515,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                     const SizedBox(height: 36),
 
-                    // 💡 App Update Prompt Section
-                    if (_updateAvailable) ...[
-                      _buildUpdateCard(),
-                      const SizedBox(height: 36),
-                    ],
+                    // 💡 App Update Prompt Section (Explicit Manual Trigger)
+                    Text('System Updates', style: textTheme.titleMedium),
+                    const SizedBox(height: 12),
+                    _buildSystemUpdateSection(),
+
+                    const SizedBox(height: 36),
                     
                     // App Information Footer
                     Center(
@@ -556,7 +560,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildUpdateCard() {
+  // 💡 System Update UI Section
+  Widget _buildSystemUpdateSection() {
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
     final textTheme = Theme.of(context).textTheme;
 
@@ -565,116 +570,157 @@ class _ProfileScreenState extends State<ProfileScreen> {
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
-        // Giving it an accent border glow for visual hierarchy prominence
-        border: Border.all(color: systemExt.borderFocus, width: 1.5),
-        boxShadow: [
+        border: Border.all(
+          color: _updateAvailable ? systemExt.borderFocus : systemExt.borderNeutral, 
+          width: _updateAvailable ? 1.5 : 1.0
+        ),
+        boxShadow: _updateAvailable ? [
           BoxShadow(
             color: systemExt.borderFocus.withOpacity(0.15),
             blurRadius: 16,
             offset: const Offset(0, 4),
           ),
-        ],
+        ] : [],
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
+          // If an update IS available
+          if (_updateAvailable) ...[
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: const BoxDecoration(color: EduDesignTokens.indigo50, shape: BoxShape.circle),
+                  child: EduComponents.icon(context: context, iconData: Icons.system_update_rounded, color: EduDesignTokens.indigo600, size: 24),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Update Available (v$_latestVersion)', style: textTheme.titleMedium?.copyWith(color: EduDesignTokens.indigo600)),
+                      Text('A new version is ready to install.', style: textTheme.bodyMedium),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (_releaseNotes.isNotEmpty) ...[
+              const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.all(12),
-                decoration: const BoxDecoration(
-                  color: EduDesignTokens.indigo50,
-                  shape: BoxShape.circle,
-                ),
-                child: EduComponents.icon(
-                  context: context, 
-                  iconData: Icons.system_update_rounded, 
-                  color: EduDesignTokens.indigo600,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
+                width: double.infinity,
+                decoration: BoxDecoration(color: systemExt.btnSoftBg, borderRadius: BorderRadius.circular(EduDesignTokens.radiusM)),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Update Available (v$_latestVersion)', style: textTheme.titleMedium?.copyWith(color: EduDesignTokens.indigo600)),
-                    Text('A new version is ready to install.', style: textTheme.bodyMedium),
+                    Text("Release Notes", style: textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    Text(_releaseNotes, style: textTheme.bodyMedium?.copyWith(fontSize: 13)),
                   ],
                 ),
               ),
             ],
-          ),
-          if (_releaseNotes.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: systemExt.btnSoftBg,
-                borderRadius: BorderRadius.circular(EduDesignTokens.radiusM),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(height: 20),
+            if (_isDownloading)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text("Release Notes", style: textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 4),
-                  Text(_releaseNotes, style: textTheme.bodyMedium?.copyWith(fontSize: 13)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Downloading...', style: textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold, color: EduDesignTokens.indigo600)),
+                      Text('${_formatBytes(_downloadedBytes)} / ${_formatBytes(_totalBytes)}', style: textTheme.labelSmall),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(EduDesignTokens.radiusFull),
+                    child: LinearProgressIndicator(
+                      value: _totalBytes > 0 ? _downloadProgress : null,
+                      minHeight: 8,
+                      backgroundColor: systemExt.btnSoftBg,
+                      valueColor: AlwaysStoppedAnimation<Color>(systemExt.borderFocus),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Center(child: Text('${(_downloadProgress * 100).toStringAsFixed(1)}%', style: textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold))),
+                ],
+              )
+            else
+              Row(
+                children: [
+                  Expanded(
+                    child: EduComponents.adminSoftButton(
+                      context: context,
+                      onPressed: () => setState(() => _updateAvailable = false),
+                      child: const Text('Later'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: EduComponents.primaryGradientButton(
+                      context: context,
+                      onPressed: _downloadAndInstallUpdate,
+                      child: const Text('Update Now'),
+                    ),
+                  ),
                 ],
               ),
-            ),
-          ],
-          const SizedBox(height: 20),
-          if (_isDownloading)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('Downloading...', style: textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold, color: EduDesignTokens.indigo600)),
-                    Text('${_formatBytes(_downloadedBytes)} / ${_formatBytes(_totalBytes)}', style: textTheme.labelSmall),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusFull),
-                  child: LinearProgressIndicator(
-                    value: _totalBytes > 0 ? _downloadProgress : null,
-                    minHeight: 8,
-                    backgroundColor: systemExt.btnSoftBg,
-                    valueColor: AlwaysStoppedAnimation<Color>(systemExt.borderFocus),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Center(
-                  child: Text(
-                    '${(_downloadProgress * 100).toStringAsFixed(1)}%', 
-                    style: textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold)
-                  )
-                ),
-              ],
-            )
-          else
+          ] 
+          // Default state or "Checking" State
+          else ...[
             Row(
               children: [
-                Expanded(
-                  child: EduComponents.adminSoftButton(
-                    context: context,
-                    onPressed: () => setState(() => _updateAvailable = false),
-                    child: const Text('Later'),
-                  ),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(color: systemExt.btnSoftBg, shape: BoxShape.circle),
+                  child: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.SmartphoneUpdate, weight: SolarIconWeight.outline), color: EduDesignTokens.slate500, size: 24),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 16),
                 Expanded(
-                  child: EduComponents.primaryGradientButton(
-                    context: context,
-                    onPressed: _downloadAndInstallUpdate,
-                    child: const Text('Update Now'),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Check for Updates', style: textTheme.titleMedium),
+                      Text('Current Version: v$_appVersion', style: textTheme.bodyMedium),
+                    ],
                   ),
                 ),
               ],
             ),
+            
+            if (_upToDateMessage.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: EduDesignTokens.emerald50,
+                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusM),
+                  border: Border.all(color: EduDesignTokens.emerald200),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.check_circle, color: EduDesignTokens.emerald600, size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(_upToDateMessage, style: textTheme.bodyMedium?.copyWith(color: EduDesignTokens.emerald700, fontSize: 13, height: 1.3)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 20),
+            EduComponents.adminSoftButton(
+              context: context,
+              onPressed: _isCheckingForUpdate ? () {} : _manualCheckForUpdates,
+              child: _isCheckingForUpdate 
+                ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Text('Check for Updates', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
         ],
       ),
     );

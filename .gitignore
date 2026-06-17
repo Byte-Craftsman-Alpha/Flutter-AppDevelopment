@@ -57,7 +57,7 @@ build/
 .generated_plugins/
 
 # Android specific
-**.apk
+.apk
 **.ap_
 **.aab
 *.bundle
