@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutty_solar_icons/flutty_solar_icons.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_file/open_file.dart';
 import '../services/auth_service.dart';
 import '../constants/theme.dart';
 import 'login.dart'; 
@@ -29,6 +32,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String _appName = 'EduPortal';
   String _appVersion = '';
   String _appPackage = '';
+
+  // 💡 Update Control Variables
+  bool _updateAvailable = false;
+  String _latestVersion = '';
+  String _releaseNotes = '';
+  bool _isDownloading = false;
+  double _downloadProgress = 0.0;
+  int _downloadedBytes = 0;
+  int _totalBytes = 0;
 
   @override
   void initState() {
@@ -62,11 +74,115 @@ class _ProfileScreenState extends State<ProfileScreen> {
       });
     }
 
-    // Then securely fetch available groups and live profile from backend
+    // Securely fetch available groups, live profile, and check for app updates from backend
     await Future.wait([
       _fetchAvailableSchedules(),
       _syncLiveProfile(silent: true),
+      _checkForUpdates(),
     ]);
+  }
+
+  // 💡 SECURE ROUTE: Check for APK updates dynamically via Backend API
+  Future<void> _checkForUpdates() async {
+    try {
+      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/app/details');
+      final response = await http.get(url).timeout(const Duration(seconds: 10));
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final latestVersionCode = data['version_code'] as int? ?? 0;
+        
+        PackageInfo packageInfo = await PackageInfo.fromPlatform();
+        int currentVersionCode = int.tryParse(packageInfo.buildNumber) ?? 0;
+        
+        // If the backend has a higher version code, an update is ready!
+        if (latestVersionCode > currentVersionCode) {
+          if (mounted) {
+            setState(() {
+              _updateAvailable = true;
+              _latestVersion = data['version_name'] ?? 'Unknown';
+              _releaseNotes = data['release_notes'] ?? '';
+            });
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("App update check failed: $e");
+    }
+  }
+
+  // 💡 APP UPDATER: Start downloading the latest APK into external storage and trigger install
+  Future<void> _downloadAndInstallUpdate() async {
+    setState(() {
+      _isDownloading = true;
+      _downloadProgress = 0.0;
+      _downloadedBytes = 0;
+      _totalBytes = 0;
+    });
+
+    try {
+      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/app/download');
+      final request = http.Request('GET', url);
+      final response = await http.Client().send(request);
+
+      if (response.statusCode != 200) {
+        throw Exception('Server refused file transfer.');
+      }
+
+      _totalBytes = response.contentLength ?? 0;
+      final dir = await getExternalStorageDirectory();
+      final filePath = '${dir!.path}/EduPortal_v$_latestVersion.apk';
+      final file = File(filePath);
+      final sink = file.openWrite();
+
+      response.stream.listen(
+        (List<int> chunk) {
+          sink.add(chunk);
+          _downloadedBytes += chunk.length;
+          if (mounted) {
+            setState(() {
+              if (_totalBytes > 0) {
+                _downloadProgress = _downloadedBytes / _totalBytes;
+              }
+            });
+          }
+        },
+        onDone: () async {
+          await sink.flush();
+          await sink.close();
+          if (mounted) {
+            setState(() {
+              _isDownloading = false;
+              _updateAvailable = false; // Hide panel post-download
+            });
+            _showToast("Download Complete. Launching Installer...", isError: false);
+          }
+          await OpenFile.open(filePath);
+        },
+        onError: (e) async {
+          await sink.close();
+          if (mounted) {
+            setState(() => _isDownloading = false);
+            _showToast("Update download was interrupted.", isError: true);
+          }
+        },
+        cancelOnError: true,
+      );
+    } catch (e) {
+      debugPrint("Download error: $e");
+      if (mounted) {
+        setState(() => _isDownloading = false);
+        _showToast("Failed to download update.", isError: true);
+      }
+    }
+  }
+
+  // Helper to format byte sizes into KB, MB, GB gracefully
+  String _formatBytes(int bytes) {
+    if (bytes <= 0) return "0 B";
+    const suffixes = ["B", "KB", "MB", "GB"];
+    var i = (log(bytes) / log(1024)).floor();
+    return '${(bytes / pow(1024, i)).toStringAsFixed(1)} ${suffixes[i]}';
   }
 
   // 💡 SECURE ROUTE: Fetch Schedule Groups from Middleware, NOT Supabase
@@ -389,12 +505,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           const Divider(height: 24, thickness: 1),
                           _buildProfileRow('Mobile Number', _extractField(['mobile', 'mobile_no', 'phone'])),
                           const Divider(height: 24, thickness: 1),
-                          _buildProfileRow('Enrollment No.', _extractField(['enrollment_no', 'enrollment', 'enrollmentNo'])),
+                          _buildProfileRow('Enrollment No.', _extractField(['enrollment_no', 'enrollment', 'enrollmentno', 'enrollmentNo'])),
                         ],
                       ),
                     ),
 
                     const SizedBox(height: 36),
+
+                    // 💡 App Update Prompt Section
+                    if (_updateAvailable) ...[
+                      _buildUpdateCard(),
+                      const SizedBox(height: 36),
+                    ],
                     
                     // App Information Footer
                     Center(
@@ -430,6 +552,130 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildUpdateCard() {
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
+        // Giving it an accent border glow for visual hierarchy prominence
+        border: Border.all(color: systemExt.borderFocus, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: systemExt.borderFocus.withOpacity(0.15),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: const BoxDecoration(
+                  color: EduDesignTokens.indigo50,
+                  shape: BoxShape.circle,
+                ),
+                child: EduComponents.icon(
+                  context: context, 
+                  iconData: Icons.system_update_rounded, 
+                  color: EduDesignTokens.indigo600,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Update Available (v$_latestVersion)', style: textTheme.titleMedium?.copyWith(color: EduDesignTokens.indigo600)),
+                    Text('A new version is ready to install.', style: textTheme.bodyMedium),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (_releaseNotes.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: systemExt.btnSoftBg,
+                borderRadius: BorderRadius.circular(EduDesignTokens.radiusM),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text("Release Notes", style: textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text(_releaseNotes, style: textTheme.bodyMedium?.copyWith(fontSize: 13)),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 20),
+          if (_isDownloading)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Downloading...', style: textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold, color: EduDesignTokens.indigo600)),
+                    Text('${_formatBytes(_downloadedBytes)} / ${_formatBytes(_totalBytes)}', style: textTheme.labelSmall),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusFull),
+                  child: LinearProgressIndicator(
+                    value: _totalBytes > 0 ? _downloadProgress : null,
+                    minHeight: 8,
+                    backgroundColor: systemExt.btnSoftBg,
+                    valueColor: AlwaysStoppedAnimation<Color>(systemExt.borderFocus),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Center(
+                  child: Text(
+                    '${(_downloadProgress * 100).toStringAsFixed(1)}%', 
+                    style: textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold)
+                  )
+                ),
+              ],
+            )
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: EduComponents.adminSoftButton(
+                    context: context,
+                    onPressed: () => setState(() => _updateAvailable = false),
+                    child: const Text('Later'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: EduComponents.primaryGradientButton(
+                    context: context,
+                    onPressed: _downloadAndInstallUpdate,
+                    child: const Text('Update Now'),
+                  ),
+                ),
+              ],
+            ),
+        ],
       ),
     );
   }

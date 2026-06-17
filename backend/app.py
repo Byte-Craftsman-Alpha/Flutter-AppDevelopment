@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from supabase import create_client, Client
 from jose import JWTError, jwt
 import firebase_admin
@@ -399,6 +400,82 @@ async def broadcast_notification(title: str, body: str, topic: str):
         return {"success": True, "message_id": response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# -------------------------------------------------------------------------
+# 7. APP UPDATER & DOWNLOAD SERVICES
+# -------------------------------------------------------------------------
+APK_FILE_PATH = "./latest_release/EduPortal.apk" 
+
+def get_apk_metadata(file_path: str) -> dict:
+    """Helper function to extract metadata directly from the APK file."""
+    if not os.path.exists(file_path):
+        return {}
+        
+    try:
+        # Import dynamically so the rest of the app doesn't crash if it's missing
+        from pyaxmlparser import APK
+        apk = APK(file_path)
+        
+        # Use file modification time as the dynamic build date
+        mtime = os.path.getmtime(file_path)
+        build_date = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d')
+        
+        return {
+            "app_name": apk.application,
+            "package_name": apk.package,
+            "version_name": apk.version_name,
+            "version_code": int(apk.version_code) if apk.version_code else 1,
+            "build_date": build_date,
+        }
+    except ImportError:
+        print("Warning: 'pyaxmlparser' not installed. Please run: pip install pyaxmlparser")
+        return {}
+    except Exception as e:
+        print(f"Error parsing APK metadata: {e}")
+        return {}
+
+@app.get("/api/app/details")
+async def get_app_details():
+    """
+    Returns metadata about the latest version of the app dynamically parsed from the APK.
+    Useful for prompting users to update when a new version is available.
+    """
+    if not os.path.exists(APK_FILE_PATH):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="The requested APK file is not currently available on the server."
+        )
+        
+    apk_data = get_apk_metadata(APK_FILE_PATH)
+    
+    return {
+        "app_name": apk_data.get("app_name", "EduPortal"),
+        "package_name": apk_data.get("package_name", "com.eduportal.app"),
+        "version_name": apk_data.get("version_name", "1.0.0"),
+        "version_code": apk_data.get("version_code", 1),
+        "build_date": apk_data.get("build_date", "2026-06-17"),
+        # Note: force_update and release_notes are server-side business logic 
+        # and aren't stored natively in the APK manifest. Keep them static or move to a DB.
+        "force_update": False,
+        "release_notes": "Latest version deployed on server."
+    }
+
+@app.get("/api/app/download")
+async def download_app():
+    """
+    Serves the APK file directly to the client.
+    """
+    if not os.path.exists(APK_FILE_PATH):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="The requested APK file is not currently available on the server."
+        )
+    
+    return FileResponse(
+        path=APK_FILE_PATH,
+        media_type="application/vnd.android.package-archive",
+        filename="EduPortal.apk" 
+    )
 
 if __name__ == "__main__":
     import uvicorn
