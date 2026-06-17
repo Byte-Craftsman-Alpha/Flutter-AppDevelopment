@@ -2,10 +2,10 @@ name: Build & Publish APK Release
 
 on:
   push:
-    tags:
-      - 'v*' # Triggers automatically whenever you push a tag starting with 'v'
+    branches:
+      - feature # 💡 CHANGED: Triggers automatically on every push to your main branch. Change to 'master' if needed.
 
-# 💡 NEW: Explicit permission needed to upload files to GitHub Releases
+# Explicit permission needed to upload files to GitHub Releases
 permissions:
   contents: write
 
@@ -30,21 +30,22 @@ jobs:
           channel: 'stable'
 
       - name: Install Dependencies
-        # 💡 NEW: Tells the server to go into the 'App' folder first
         working-directory: App
         run: flutter pub get
 
       - name: Build APK
-        # 💡 NEW: Tells the server to build from inside the 'App' folder
         working-directory: App
         run: flutter build apk --release
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          # 💡 NEW: Updated the path to look inside the 'App' folder for the final output
+          # 💡 NEW: Automatically generates a unique tag/name based on the workflow run number
+          tag_name: build-${{ github.run_number }}
+          name: Auto-Release Build ${{ github.run_number }}
+          
+          # Looks inside the 'App' folder for the final output
           files: App/build/app/outputs/flutter-apk/app-release.apk
-          name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
         env:
