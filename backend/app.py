@@ -235,7 +235,6 @@ async def get_vault_records(token: str):
 @app.delete("/api/vault/delete")
 async def delete_vault_record(record_id: str, token: str):
     user = await get_current_user(token)
-    # Security: .eq("user_id", ...) strictly enforces that a user can only delete their own files
     response = supabase.table("student_vault").delete().eq("id", record_id).eq("user_id", user["roll_number"]).execute()
     return {"success": True}
 
@@ -260,11 +259,15 @@ async def handle_chat_delivery(message: dict, token: str):
     }
     
     db_response = supabase.table("GroupChats").insert(chat_entry).execute()
-    broadcast_notification(
+    
+    # 💡 BUG FIX: Added `await` here. Since it's an async function, 
+    # it won't actually trigger the notification if you don't await it.
+    await broadcast_notification(
         title=f"New Message from {user['name']}",
         body=chat_entry["message_body"][:100] + ("..." if len(chat_entry["message_body"]) > 100 else ""),
         topic="general"
     )
+    
     return {"success": True, "data": db_response.data}
 
 @app.get("/api/chat/history")
@@ -282,7 +285,6 @@ async def edit_chat_message(payload: dict, token: str):
     if not message_id or not new_body:
         raise HTTPException(status_code=400, detail="Missing message_id or new_body parameters.")
     
-    # Security: Check sender_id to prevent users from editing other people's messages
     response = supabase.table("GroupChats").update({
         "message_body": new_body, 
         "is_edited": True
@@ -293,7 +295,6 @@ async def edit_chat_message(payload: dict, token: str):
 @app.delete("/api/chat/delete")
 async def delete_chat_message(message_id: str, token: str):
     user = await get_current_user(token)
-    # Security: Check sender_id to prevent users from deleting other people's messages
     response = supabase.table("GroupChats").delete().eq("id", message_id).eq("sender_id", user["roll_number"]).execute()
     return {"success": True}
 
@@ -330,18 +331,14 @@ async def fetch_academic_schedules(department: str, semester: str, group_name: O
 @app.get("/api/schedule/groups")
 async def get_schedule_groups(token: str):
     await get_current_user(token)
-    
-    # 💡 FIX: Use select("*") to bypass Supabase's strict case-sensitive URL parsing
     response = supabase.table("Weekly Schedules").select("*").execute()
     
     groups = set()
     for row in (response.data or []):
-        # 💡 Use the robust case-insensitive parser to find the group name safely
         group_name = get_field_insensitive(
             row, 
             ["schedulegroupname", "schedule_group_name", "group_name", "group"]
         )
-        
         if group_name:
             groups.add(group_name)
             
@@ -394,6 +391,8 @@ async def broadcast_notification(title: str, body: str, topic: str):
     try:
         message = messaging.Message(
             notification=messaging.Notification(title=title, body=body),
+            # 💡 Included target_page logic in data so deep-linking continues to work!
+            data={"target_page": "/chat"}, 
             topic=topic,
         )
         response = messaging.send(message)
