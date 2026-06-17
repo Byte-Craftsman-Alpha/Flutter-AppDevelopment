@@ -1,0 +1,48 @@
+name: Build & Publish APK Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers automatically whenever you push a tag starting with 'v' (e.g., v1.0.1)
+
+jobs:
+  build:
+    name: Build and Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Check out the repository source code
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Java environment needed for Android building
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      # Step 3: Set up Flutter environment
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      # Step 4: Install dependencies
+      - name: Install Dependencies
+        run: flutter pub get
+
+      # Step 5: Build the release APK
+      - name: Build APK
+        run: flutter build apk --release --no-tree-shake-icons
+
+      # Step 6: Automatically create a GitHub Release and attach the APK asset
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/app/outputs/flutter-apk/app-release.apk
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Provided automatically by GitHub
