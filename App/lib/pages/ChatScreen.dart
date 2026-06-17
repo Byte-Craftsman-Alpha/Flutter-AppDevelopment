@@ -943,7 +943,7 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
                       if (sendingStatus == 'sending')
                         SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 1.5, color: Theme.of(context).primaryColor.withOpacity(0.5)))
                       else
-                        Icon(Icons.done_all_rounded, size: 14, color: Theme.of(context).primaryColor.withOpacity(0.8)),
+                        SolarIcon(SolarIcons.CheckRead, size: 14, color: Theme.of(context).primaryColor.withOpacity(0.8)),
                     ],
                   ],
                 ),
@@ -1192,7 +1192,7 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
             children: [
               AppBar(
                 backgroundColor: Colors.transparent, elevation: 0,
-                leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white), onPressed: () => Navigator.pop(context)),
+                leading: IconButton(icon: const SolarIcon(SolarIcons.ArrowLeft, color: Colors.white), onPressed: () => Navigator.pop(context)),
                 title: Text(filename, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
               ),
               Expanded(
@@ -1286,24 +1286,24 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(color: theme.cardColor, border: Border(top: BorderSide(color: systemExt.borderNeutral))),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Padding(
-            padding: const EdgeInsets.only(bottom: 1),
+            padding: const EdgeInsets.only(bottom: 4),
             child: IconButton(
               onPressed: _isUploadingFile ? null : _handleAttachmentSelection,
-              icon: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.Paperclip, weight: SolarIconWeight.outline), color: EduDesignTokens.slate400),
+              style: IconButton.styleFrom(backgroundColor: Colors.transparent, foregroundColor: EduDesignTokens.slate800, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl))),
+              icon: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.AddSquare, weight: SolarIconWeight.outline), color: EduDesignTokens.slate400, size: 18),
             ),
           ),
           Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-              decoration: BoxDecoration(color: Colors.transparent, borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl), border: Border.all(color: systemExt.borderNeutral)),
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 4),
               child: TextField(
-                controller: _msgController, minLines: 1, maxLines: 2, keyboardType: TextInputType.multiline, textInputAction: TextInputAction.newline,
+                controller: _msgController, minLines: 1, maxLines: 5, keyboardType: TextInputType.multiline, textInputAction: TextInputAction.newline,
                 style: theme.textTheme.bodyLarge?.copyWith(fontSize: 14),
                 decoration: const InputDecoration(hintText: "Type message...", hintStyle: TextStyle(fontSize: 13, color: EduDesignTokens.slate400), border: InputBorder.none, enabledBorder: InputBorder.none, focusedBorder: InputBorder.none, isDense: true),
               ),
@@ -1315,7 +1315,7 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
             child: IconButton(
               onPressed: _editingMessage != null ? _updateTextMessage : _transmitTextMessage,
               style: IconButton.styleFrom(backgroundColor: theme.primaryColor, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl))),
-              icon: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.ArrowRight, weight: SolarIconWeight.bold), color: Colors.white, size: 18),
+              icon: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.Plain, weight: SolarIconWeight.bold), color: Colors.white, size: 18),
             ),
           ),
         ],

@@ -163,10 +163,10 @@ class StudentIdCard extends StatelessWidget {
           Container(
             width: 45,
             height: 45,
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.white,
-              image: DecorationImage(
+              color: headerColor,
+              image: const DecorationImage(
                 image: AssetImage('assets/images/Logo.png'),
                 fit: BoxFit.contain,
               ),
@@ -232,9 +232,9 @@ class StudentIdCard extends StatelessWidget {
         // Background Watermark
         Positioned.fill(
           child: Padding(
-            padding: const EdgeInsets.all(24.0),
+            padding: const EdgeInsets.all(0),
             child: Opacity(
-              opacity: 0.15,
+              opacity: 1,
               child: Image.asset(
                 'assets/images/Watermark.png',
                 fit: BoxFit.contain,
@@ -249,27 +249,7 @@ class StudentIdCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Left Column (QR Code)
-              SizedBox(
-                width: 90,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        _buildIdCardView(user, theme, systemExt, securePayload),
-                        const SizedBox(height: 4),
-                        // Signature could go here
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 16),
-              
-              // Right Column (Student Details)
+              // Left Column (Student Details)
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -283,6 +263,20 @@ class StudentIdCard extends StatelessWidget {
                         Expanded(child: _buildInfoItem("Roll Number", user?.rollNumber ?? "N/A")),
                       ],
                     ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+
+              // Right Column (QR Code)
+              SizedBox(
+                width: 90,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _buildIdCardView(user, theme, systemExt, securePayload),
+                    const SizedBox(height: 4),
                   ],
                 ),
               ),
@@ -326,11 +320,11 @@ class StudentIdCard extends StatelessWidget {
     return Container(
       height: 90,
       width: 90,
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(0),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade400),
-        color: Colors.white,
+        border: Border.all(color: Colors.transparent, width: 1), // Subtle border to define the QR code area
+        color: Colors.transparent,
       ),
       child: Center(
         child: securePayload.isNotEmpty
@@ -338,9 +332,9 @@ class StudentIdCard extends StatelessWidget {
                 data: securePayload,
                 version: QrVersions.auto,
                 errorCorrectionLevel: QrErrorCorrectLevel.M,
-                backgroundColor: Colors.white,
+                backgroundColor: Colors.transparent,
               )
-            : const Icon(Icons.qr_code, color: Colors.grey, size: 40),
+            : const SolarIcon(SolarIcons.QRCode, color: Colors.grey, size: 40),
       ),
     );
   }

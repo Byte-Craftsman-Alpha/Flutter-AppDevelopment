@@ -237,7 +237,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text('Student Profile', style: textTheme.titleLarge?.copyWith(fontSize: 24, fontWeight: FontWeight.bold)),
+                    Text('Student Profile', style: textTheme.titleLarge?.copyWith(fontSize: 20, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 24),
 
                     // 💡 Profile Identity Card
@@ -349,14 +349,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 dropdownColor: Theme.of(context).cardColor,
                                 borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
                                 items: [
-                                  const DropdownMenuItem<String>(
+                                  DropdownMenuItem<String>(
                                     value: null,
-                                    child: Text('Unassigned / No Section', style: TextStyle(fontWeight: FontWeight.bold, color: EduDesignTokens.slate400)),
+                                    child: Text('Unassigned / No Section', style: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold, fontSize: 14)),
                                   ),
                                   ..._availableSchedules.map((String value) {
                                     return DropdownMenuItem<String>(
                                       value: value,
-                                      child: Text('Section: $value', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                      child: Text('Section: $value', style: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold, fontSize: 14)),
                                     );
                                   }),
                                 ],
