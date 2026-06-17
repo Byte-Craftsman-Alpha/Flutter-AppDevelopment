@@ -1,7 +1,6 @@
 import 'dart:convert';
-import 'dart:async';
-import 'dart:io';
-import 'package:flutter_timezone/flutter_timezone.dart';
+import 'dart:async'; 
+import 'dart:io'; 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../constants/widgets.dart';
@@ -37,7 +36,7 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   int _currentIndex = 0;
   bool _isLoading = true;
-  bool _hasSyncError = false;
+  bool _hasSyncError = false; 
   String _greeting = 'Welcome';
 
   List<Map<String, dynamic>> _todayClasses = [];
@@ -46,9 +45,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   // 💡 To-Do Reminders State
   List<Map<String, dynamic>> _reminders = [];
-  final FlutterLocalNotificationsPlugin _localNotif =
-      FlutterLocalNotificationsPlugin();
-  Timer? _reminderTimer;
+  final FlutterLocalNotificationsPlugin _localNotif = FlutterLocalNotificationsPlugin();
 
   int _parseTimeStr(String timeStr) {
     try {
@@ -73,19 +70,19 @@ class _MyHomePageState extends State<MyHomePage> {
     tz.initializeTimeZones(); // Initialize timezone DB for background alarms
     _determineGreeting();
     _fetchDashboardContext();
+    
+    // 💡 FIXED: Properly chain the async setup so alarms don't try to sync before the plugin initializes
+    _initNotificationsAndReminders();
+  }
 
-    // Initialize Local Reminders
-    Future.microtask(() async {
-      await _initializeLocalNotif();
-      await _loadReminders();
-      await _syncScheduledNotifications();
-    });
-    _startReminderTimer();
+  // Safely sequences the loading pipeline
+  Future<void> _initNotificationsAndReminders() async {
+    await _initializeLocalNotif();
+    await _loadReminders();
   }
 
   @override
   void dispose() {
-    _reminderTimer?.cancel();
     super.dispose();
   }
 
@@ -142,21 +139,16 @@ class _MyHomePageState extends State<MyHomePage> {
       final vaultUrl = Uri.parse(
         'https://flutter-app-development-mu.vercel.app/api/vault/records?token=$token',
       );
-      final vaultRes = await http
-          .get(vaultUrl)
-          .timeout(const Duration(seconds: 15));
+      final vaultRes = await http.get(vaultUrl).timeout(const Duration(seconds: 15));
 
       if (vaultRes.statusCode == 200) {
         final List<dynamic> records = json.decode(vaultRes.body);
-        final List<Map<String, dynamic>> typedRecords = records
-            .cast<Map<String, dynamic>>();
+        final List<Map<String, dynamic>> typedRecords = records.cast<Map<String, dynamic>>();
 
         typedRecords.sort((a, b) {
-          final dateA =
-              DateTime.tryParse(a['created_at'].toString()) ??
+          final dateA = DateTime.tryParse(a['created_at'].toString()) ??
               DateTime.fromMillisecondsSinceEpoch(0);
-          final dateB =
-              DateTime.tryParse(b['created_at'].toString()) ??
+          final dateB = DateTime.tryParse(b['created_at'].toString()) ??
               DateTime.fromMillisecondsSinceEpoch(0);
           return dateB.compareTo(dateA);
         });
@@ -168,24 +160,19 @@ class _MyHomePageState extends State<MyHomePage> {
 
       if (groupName.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
-        final String? cachedScheduleStr = prefs.getString(
-          'offline_cache_schedule_$groupName',
-        );
+        final String? cachedScheduleStr = prefs.getString('offline_cache_schedule_$groupName');
 
         if (cachedScheduleStr != null) {
           final List<dynamic> rawClassesList = json.decode(cachedScheduleStr);
 
-          final currentDayString = DateFormat(
-            'EEEE',
-          ).format(DateTime.now()).toLowerCase();
+          final currentDayString = DateFormat('EEEE').format(DateTime.now()).toLowerCase();
           final now = DateTime.now();
           final currentMinutes = now.hour * 60 + now.minute;
 
           _todayClasses = rawClassesList
               .map((e) => Map<String, dynamic>.from(e))
               .where((c) {
-                if ((c['day']?.toString().toLowerCase().trim() ?? '') !=
-                    currentDayString) {
+                if ((c['day']?.toString().toLowerCase().trim() ?? '') != currentDayString) {
                   return false;
                 }
                 final timeRange = c['time']?.toString() ?? '';
@@ -199,17 +186,13 @@ class _MyHomePageState extends State<MyHomePage> {
               .toList();
 
           _todayClasses.sort(
-            (a, b) => (a['time'] ?? '').toString().compareTo(
-              (b['time'] ?? '').toString(),
-            ),
+            (a, b) => (a['time'] ?? '').toString().compareTo((b['time'] ?? '').toString()),
           );
         }
       }
 
       final prefs = await SharedPreferences.getInstance();
-      final String? cachedEventsStr = prefs.getString(
-        'offline_cache_monthly_calendar',
-      );
+      final String? cachedEventsStr = prefs.getString('offline_cache_monthly_calendar');
 
       if (cachedEventsStr != null) {
         final List<dynamic> eventsData = json.decode(cachedEventsStr);
@@ -219,8 +202,7 @@ class _MyHomePageState extends State<MyHomePage> {
         _todayEvents = eventsData
             .map((e) => Map<String, dynamic>.from(e))
             .where((e) {
-              final eventDate =
-                  e['Date']?.toString() ?? e['date']?.toString() ?? '';
+              final eventDate = e['Date']?.toString() ?? e['date']?.toString() ?? '';
               return eventDate == todayString;
             })
             .toList();
@@ -229,9 +211,7 @@ class _MyHomePageState extends State<MyHomePage> {
       debugPrint("❌ Dashboard Sync Error: $e");
       if (mounted) {
         setState(() => _hasSyncError = true);
-        _showErrorSnackBar(
-          'Connection failed. Please check your internet and try again.',
-        );
+        _showErrorSnackBar('Connection failed. Please check your internet and try again.');
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -246,9 +226,7 @@ class _MyHomePageState extends State<MyHomePage> {
       }
     } catch (e) {
       if (mounted) {
-        _showErrorSnackBar(
-          'Unable to open the external website. Please try again.',
-        );
+        _showErrorSnackBar('Unable to open the external website. Please try again.');
       }
     }
   }
@@ -258,52 +236,17 @@ class _MyHomePageState extends State<MyHomePage> {
   // =========================================================================
 
   Future<void> _initializeLocalNotif() async {
-    tz.initializeTimeZones();
-
-    try {
-      final String timezone = await FlutterTimezone.getLocalTimezone();
-
-      tz.setLocalLocation(tz.getLocation(timezone));
-    } catch (e) {
-      debugPrint("Timezone init failed: $e");
-    }
-
-    const AndroidInitializationSettings androidSettings =
-        AndroidInitializationSettings('ic_launcher');
-
-    const DarwinInitializationSettings iosSettings =
-        DarwinInitializationSettings();
-
-    const InitializationSettings initSettings = InitializationSettings(
-      android: androidSettings,
-      iOS: iosSettings,
-    );
-
+    const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('launcher_icon');
+    const DarwinInitializationSettings iosSettings = DarwinInitializationSettings();
+    const InitializationSettings initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+    
+    // Uses fully named parameter expected by plugin v17.0+
     await _localNotif.initialize(settings: initSettings);
 
-    const AndroidNotificationChannel reminderChannel =
-        AndroidNotificationChannel(
-          'task_reminders_channel',
-          'Task Reminders',
-          description: 'Alerts for upcoming student tasks',
-          importance: Importance.max,
-        );
-
-    await _localNotif
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.createNotificationChannel(reminderChannel);
-
-    final androidPlatform = _localNotif
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >();
-
+    final androidPlatform = _localNotif.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
     if (androidPlatform != null) {
-      await androidPlatform.requestNotificationsPermission();
-
       try {
+        await androidPlatform.requestNotificationsPermission();
         await androidPlatform.requestExactAlarmsPermission();
       } catch (_) {}
     }
@@ -312,16 +255,24 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> _loadReminders() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final str = prefs.getString('offline_custom_reminders');
+      
+      // 💡 FIXED: Uses student-specific storage key to prevent cross-account leaks
+      final String userRoll = AuthService.currentUser?.rollNumber ?? 'default';
+      final str = prefs.getString('offline_tasks_$userRoll') ?? prefs.getString('offline_custom_reminders');
+      
       if (str != null) {
         final List<dynamic> decoded = json.decode(str);
-        setState(() {
-          _reminders = decoded
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-          _sortReminders();
-        });
+        if (mounted) {
+          setState(() {
+            _reminders = decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+            _sortReminders();
+          });
+        }
       }
+      
+      // 💡 CRITICAL FIX: Re-syncs notifications upon loading! 
+      // If the device rebooted, all OS alarms were wiped. This instantly restores them securely.
+      await _syncScheduledNotifications();
     } catch (e) {
       debugPrint("Error loading reminders: $e");
     }
@@ -330,10 +281,9 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> _saveReminders() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-        'offline_custom_reminders',
-        json.encode(_reminders),
-      );
+      final String userRoll = AuthService.currentUser?.rollNumber ?? 'default';
+      
+      await prefs.setString('offline_tasks_$userRoll', json.encode(_reminders));
       await _syncScheduledNotifications(); // Sync OS Alarms when saving
     } catch (e) {
       debugPrint("Error saving reminders: $e");
@@ -342,17 +292,17 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Future<void> _syncScheduledNotifications() async {
     await _localNotif.cancelAll(); // Wipe all old pending alarms
-
+    
     final now = DateTime.now();
     for (int i = 0; i < _reminders.length; i++) {
       final r = _reminders[i];
       if (r['is_completed'] == true) continue;
-
+      
       final rTime = DateTime.tryParse(r['datetime'] ?? '');
       if (rTime != null && rTime.isAfter(now)) {
         final duration = rTime.difference(now);
-        final scheduledTZDate = tz.TZDateTime.from(rTime, tz.local);
-
+        final scheduledTZDate = tz.TZDateTime.now(tz.local).add(duration);
+        
         const notifDetails = NotificationDetails(
           android: AndroidNotificationDetails(
             'task_reminders_channel',
@@ -360,16 +310,16 @@ class _MyHomePageState extends State<MyHomePage> {
             channelDescription: 'Alerts for upcoming student tasks',
             importance: Importance.max,
             priority: Priority.high,
-            icon: 'launcher_icon',
+            icon: 'launcher_icon', 
           ),
         );
 
         final int notifId = r['id'].hashCode.abs() % 100000;
 
         try {
-          // 💡 Attempt exact scheduling first (requires Android 14 permission)
+          // Attempt exact scheduling first
           await _localNotif.zonedSchedule(
-            id: notifId,
+            id: notifId, 
             title: r['title'] ?? 'Task Reminder',
             body: r['description'] ?? 'Scheduled task deadline reached.',
             scheduledDate: scheduledTZDate,
@@ -377,10 +327,9 @@ class _MyHomePageState extends State<MyHomePage> {
             androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
           );
         } catch (e) {
-          // 💡 Fallback to inexact scheduling if exact permission was denied
-          // Ensures the app never crashes while still setting up the alarm
+          // Graceful fallback to inexact scheduling if Android 14+ blocks the exact alarm
           await _localNotif.zonedSchedule(
-            id: notifId,
+            id: notifId, 
             title: r['title'] ?? 'Task Reminder',
             body: r['description'] ?? 'Scheduled task deadline reached.',
             scheduledDate: scheduledTZDate,
@@ -388,15 +337,8 @@ class _MyHomePageState extends State<MyHomePage> {
             androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
           );
         }
-        debugPrint(
-          "Reminder scheduled => "
-          "${r['title']} at $scheduledTZDate",
-        );
       }
     }
-    final pending = await _localNotif.pendingNotificationRequests();
-
-    debugPrint("Pending notifications count: ${pending.length}");
   }
 
   void _sortReminders() {
@@ -410,38 +352,11 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
-  void _startReminderTimer() {
-    // 💡 Active Lightweight Polling purely for UI State Updates
-    // Notifications are handled completely natively by OS alarms now.
-    _reminderTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
-      final now = DateTime.now();
-      bool changed = false;
-
-      for (int i = 0; i < _reminders.length; i++) {
-        final r = _reminders[i];
-        if (r['is_completed'] == true) continue;
-        if (r['notified'] == true) continue;
-
-        final rTime = DateTime.tryParse(r['datetime'] ?? '');
-        if (rTime != null && now.isAfter(rTime)) {
-          _reminders[i]['notified'] = true;
-          changed = true;
-        }
-      }
-
-      if (changed) {
-        await _saveReminders();
-        if (mounted) setState(() {});
-      }
-    });
-  }
-
   void _toggleReminderComplete(String id) {
     setState(() {
       final index = _reminders.indexWhere((r) => r['id'] == id);
       if (index != -1) {
-        _reminders[index]['is_completed'] =
-            !(_reminders[index]['is_completed'] ?? false);
+        _reminders[index]['is_completed'] = !(_reminders[index]['is_completed'] ?? false);
         _sortReminders();
         _saveReminders();
       }
@@ -458,24 +373,16 @@ class _MyHomePageState extends State<MyHomePage> {
   void _showAddEditReminderModal([Map<String, dynamic>? existingReminder]) {
     final theme = Theme.of(context);
     final systemExt = theme.extension<EduPortalThemeExtension>()!;
-
-    final TextEditingController titleController = TextEditingController(
-      text: existingReminder?['title'] ?? '',
-    );
-    final TextEditingController descController = TextEditingController(
-      text: existingReminder?['description'] ?? '',
-    );
-
-    DateTime selectedDate =
-        existingReminder != null && existingReminder['datetime'] != null
-        ? DateTime.tryParse(existingReminder['datetime']) ?? DateTime.now()
+    
+    final TextEditingController titleController = TextEditingController(text: existingReminder?['title'] ?? '');
+    final TextEditingController descController = TextEditingController(text: existingReminder?['description'] ?? '');
+    
+    DateTime selectedDate = existingReminder != null && existingReminder['datetime'] != null 
+        ? DateTime.tryParse(existingReminder['datetime']) ?? DateTime.now() 
         : DateTime.now();
-
-    TimeOfDay selectedTime =
-        existingReminder != null && existingReminder['datetime'] != null
-        ? TimeOfDay.fromDateTime(
-            DateTime.tryParse(existingReminder['datetime']) ?? DateTime.now(),
-          )
+        
+    TimeOfDay selectedTime = existingReminder != null && existingReminder['datetime'] != null 
+        ? TimeOfDay.fromDateTime(DateTime.tryParse(existingReminder['datetime']) ?? DateTime.now()) 
         : TimeOfDay.now();
 
     showModalBottomSheet(
@@ -486,16 +393,12 @@ class _MyHomePageState extends State<MyHomePage> {
         return StatefulBuilder(
           builder: (context, setModalState) {
             return Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom,
-              ),
+              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
               child: Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
                   color: theme.cardColor,
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(EduDesignTokens.radius3xl),
-                  ),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(EduDesignTokens.radius3xl)),
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -503,23 +406,13 @@ class _MyHomePageState extends State<MyHomePage> {
                   children: [
                     Center(
                       child: Container(
-                        width: 40,
-                        height: 4,
-                        margin: const EdgeInsets.only(bottom: 24),
-                        decoration: BoxDecoration(
-                          color: EduDesignTokens.slate300,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
+                        width: 40, height: 4, margin: const EdgeInsets.only(bottom: 24),
+                        decoration: BoxDecoration(color: EduDesignTokens.slate300, borderRadius: BorderRadius.circular(2)),
                       ),
                     ),
-                    Text(
-                      existingReminder == null
-                          ? 'Create New Task'
-                          : 'Edit Task',
-                      style: theme.textTheme.titleLarge,
-                    ),
+                    Text(existingReminder == null ? 'Create New Task' : 'Edit Task', style: theme.textTheme.titleLarge),
                     const SizedBox(height: 20),
-
+                    
                     TextField(
                       controller: titleController,
                       style: theme.textTheme.bodyLarge,
@@ -527,16 +420,11 @@ class _MyHomePageState extends State<MyHomePage> {
                         labelText: 'Task Title',
                         filled: true,
                         fillColor: systemExt.btnSoftBg,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(
-                            EduDesignTokens.radiusXl,
-                          ),
-                          borderSide: BorderSide.none,
-                        ),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl), borderSide: BorderSide.none),
                       ),
                     ),
                     const SizedBox(height: 12),
-
+                    
                     TextField(
                       controller: descController,
                       style: theme.textTheme.bodyLarge,
@@ -545,16 +433,11 @@ class _MyHomePageState extends State<MyHomePage> {
                         labelText: 'Description (Optional)',
                         filled: true,
                         fillColor: systemExt.btnSoftBg,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(
-                            EduDesignTokens.radiusXl,
-                          ),
-                          borderSide: BorderSide.none,
-                        ),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl), borderSide: BorderSide.none),
                       ),
                     ),
                     const SizedBox(height: 16),
-
+                    
                     Row(
                       children: [
                         Expanded(
@@ -563,42 +446,19 @@ class _MyHomePageState extends State<MyHomePage> {
                               final date = await showDatePicker(
                                 context: context,
                                 initialDate: selectedDate,
-                                firstDate: DateTime.now().subtract(
-                                  const Duration(days: 1),
-                                ),
+                                firstDate: DateTime.now().subtract(const Duration(days: 1)),
                                 lastDate: DateTime(2030),
                               );
-                              if (date != null)
-                                setModalState(() => selectedDate = date);
+                              if (date != null) setModalState(() => selectedDate = date);
                             },
                             child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 14,
-                                horizontal: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                color: systemExt.btnSoftBg,
-                                borderRadius: BorderRadius.circular(
-                                  EduDesignTokens.radiusXl,
-                                ),
-                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+                              decoration: BoxDecoration(color: systemExt.btnSoftBg, borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl)),
                               child: Row(
                                 children: [
-                                  Icon(
-                                    Icons.calendar_today_rounded,
-                                    size: 18,
-                                    color: theme.primaryColor,
-                                  ),
+                                  Icon(Icons.calendar_today_rounded, size: 18, color: theme.primaryColor),
                                   const SizedBox(width: 8),
-                                  Text(
-                                    DateFormat(
-                                      'MMM dd, yyyy',
-                                    ).format(selectedDate),
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13,
-                                    ),
-                                  ),
+                                  Text(DateFormat('MMM dd, yyyy').format(selectedDate), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                                 ],
                               ),
                             ),
@@ -608,39 +468,17 @@ class _MyHomePageState extends State<MyHomePage> {
                         Expanded(
                           child: InkWell(
                             onTap: () async {
-                              final time = await showTimePicker(
-                                context: context,
-                                initialTime: selectedTime,
-                              );
-                              if (time != null)
-                                setModalState(() => selectedTime = time);
+                              final time = await showTimePicker(context: context, initialTime: selectedTime);
+                              if (time != null) setModalState(() => selectedTime = time);
                             },
                             child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 14,
-                                horizontal: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                color: systemExt.btnSoftBg,
-                                borderRadius: BorderRadius.circular(
-                                  EduDesignTokens.radiusXl,
-                                ),
-                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+                              decoration: BoxDecoration(color: systemExt.btnSoftBg, borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl)),
                               child: Row(
                                 children: [
-                                  Icon(
-                                    Icons.access_time_rounded,
-                                    size: 18,
-                                    color: theme.primaryColor,
-                                  ),
+                                  Icon(Icons.access_time_rounded, size: 18, color: theme.primaryColor),
                                   const SizedBox(width: 8),
-                                  Text(
-                                    selectedTime.format(context),
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13,
-                                    ),
-                                  ),
+                                  Text(selectedTime.format(context), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                                 ],
                               ),
                             ),
@@ -649,49 +487,37 @@ class _MyHomePageState extends State<MyHomePage> {
                       ],
                     ),
                     const SizedBox(height: 24),
-
+                    
                     ElevatedButton(
                       onPressed: () {
                         if (titleController.text.trim().isEmpty) return;
-
+                        
                         final finalDateTime = DateTime(
-                          selectedDate.year,
-                          selectedDate.month,
-                          selectedDate.day,
-                          selectedTime.hour,
-                          selectedTime.minute,
+                          selectedDate.year, selectedDate.month, selectedDate.day,
+                          selectedTime.hour, selectedTime.minute,
                         );
 
                         setState(() {
                           if (existingReminder != null) {
-                            final index = _reminders.indexWhere(
-                              (r) => r['id'] == existingReminder['id'],
-                            );
+                            final index = _reminders.indexWhere((r) => r['id'] == existingReminder['id']);
                             if (index != -1) {
                               _reminders[index] = {
                                 'id': existingReminder['id'],
                                 'title': titleController.text.trim(),
                                 'description': descController.text.trim(),
                                 'datetime': finalDateTime.toIso8601String(),
-                                'is_completed':
-                                    existingReminder['is_completed'],
-                                'notified':
-                                    finalDateTime.isBefore(DateTime.now())
-                                    ? true
-                                    : false,
+                                'is_completed': existingReminder['is_completed'],
+                                'notified': finalDateTime.isBefore(DateTime.now()) ? true : false,
                               };
                             }
                           } else {
                             _reminders.add({
-                              'id': DateTime.now().millisecondsSinceEpoch
-                                  .toString(),
+                              'id': DateTime.now().millisecondsSinceEpoch.toString(),
                               'title': titleController.text.trim(),
                               'description': descController.text.trim(),
                               'datetime': finalDateTime.toIso8601String(),
                               'is_completed': false,
-                              'notified': finalDateTime.isBefore(DateTime.now())
-                                  ? true
-                                  : false,
+                              'notified': finalDateTime.isBefore(DateTime.now()) ? true : false,
                             });
                           }
                           _sortReminders();
@@ -703,19 +529,9 @@ class _MyHomePageState extends State<MyHomePage> {
                         backgroundColor: theme.primaryColor,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(
-                            EduDesignTokens.radiusXl,
-                          ),
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl)),
                       ),
-                      child: Text(
-                        existingReminder == null ? 'Save Task' : 'Update Task',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
+                      child: Text(existingReminder == null ? 'Save Task' : 'Update Task', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                     ),
                   ],
                 ),
@@ -739,19 +555,11 @@ class _MyHomePageState extends State<MyHomePage> {
           child: Center(
             child: Column(
               children: [
-                const SolarIcon(
-                  SolarIcons.ChecklistMinimalistic,
-                  color: EduDesignTokens.slate300,
-                  size: 40,
-                ),
+                const SolarIcon(SolarIcons.ChecklistMinimalistic, color: EduDesignTokens.slate300, size: 40),
                 const SizedBox(height: 12),
                 Text('No Pending Tasks', style: theme.textTheme.titleMedium),
                 const SizedBox(height: 4),
-                Text(
-                  'Add custom reminders or to-dos to keep track of your goals.',
-                  style: theme.textTheme.bodyMedium,
-                  textAlign: TextAlign.center,
-                ),
+                Text('Add custom reminders or to-dos to keep track of your goals.', style: theme.textTheme.bodyMedium, textAlign: TextAlign.center),
               ],
             ),
           ),
@@ -762,8 +570,7 @@ class _MyHomePageState extends State<MyHomePage> {
     return Column(
       children: _reminders.map((task) {
         final isCompleted = task['is_completed'] == true;
-        final dateTime =
-            DateTime.tryParse(task['datetime'] ?? '') ?? DateTime.now();
+        final dateTime = DateTime.tryParse(task['datetime'] ?? '') ?? DateTime.now();
         final timeString = DateFormat('MMM dd, hh:mm a').format(dateTime);
         final isPastDue = dateTime.isBefore(DateTime.now()) && !isCompleted;
 
@@ -772,35 +579,18 @@ class _MyHomePageState extends State<MyHomePage> {
           child: EduComponents.card(
             context: context,
             child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 8,
-              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               leading: InkWell(
                 onTap: () => _toggleReminderComplete(task['id']),
                 borderRadius: BorderRadius.circular(EduDesignTokens.radiusFull),
                 child: Container(
-                  width: 28,
-                  height: 28,
+                  width: 28, height: 28,
                   decoration: BoxDecoration(
-                    color: isCompleted
-                        ? EduDesignTokens.emerald500
-                        : Colors.transparent,
-                    border: Border.all(
-                      color: isCompleted
-                          ? EduDesignTokens.emerald500
-                          : EduDesignTokens.slate300,
-                      width: 2,
-                    ),
+                    color: isCompleted ? EduDesignTokens.emerald500 : Colors.transparent,
+                    border: Border.all(color: isCompleted ? EduDesignTokens.emerald500 : EduDesignTokens.slate300, width: 2),
                     shape: BoxShape.circle,
                   ),
-                  child: isCompleted
-                      ? const Icon(
-                          Icons.check_rounded,
-                          color: Colors.white,
-                          size: 18,
-                        )
-                      : null,
+                  child: isCompleted ? const Icon(Icons.check_rounded, color: Colors.white, size: 18) : null,
                 ),
               ),
               title: Text(
@@ -808,9 +598,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 style: theme.textTheme.bodyLarge?.copyWith(
                   fontWeight: FontWeight.bold,
                   decoration: isCompleted ? TextDecoration.lineThrough : null,
-                  color: isCompleted
-                      ? EduDesignTokens.slate400
-                      : theme.textTheme.bodyLarge?.color,
+                  color: isCompleted ? EduDesignTokens.slate400 : theme.textTheme.bodyLarge?.color,
                 ),
               ),
               subtitle: Column(
@@ -820,38 +608,21 @@ class _MyHomePageState extends State<MyHomePage> {
                     Padding(
                       padding: const EdgeInsets.only(top: 4.0),
                       child: Text(
-                        task['description'],
-                        style: TextStyle(
-                          decoration: isCompleted
-                              ? TextDecoration.lineThrough
-                              : null,
-                          fontSize: 12,
-                        ),
+                        task['description'], 
+                        style: TextStyle(decoration: isCompleted ? TextDecoration.lineThrough : null, fontSize: 12),
                       ),
                     ),
                   const SizedBox(height: 6),
                   Row(
                     children: [
-                      Icon(
-                        Icons.access_time_rounded,
-                        size: 12,
-                        color: isCompleted
-                            ? EduDesignTokens.slate400
-                            : (isPastDue
-                                  ? EduDesignTokens.rose700
-                                  : theme.primaryColor),
-                      ),
+                      Icon(Icons.access_time_rounded, size: 12, color: isCompleted ? EduDesignTokens.slate400 : (isPastDue ? EduDesignTokens.rose700 : theme.primaryColor)),
                       const SizedBox(width: 4),
                       Text(
-                        timeString,
+                        timeString, 
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 11, 
                           fontWeight: FontWeight.bold,
-                          color: isCompleted
-                              ? EduDesignTokens.slate400
-                              : (isPastDue
-                                    ? EduDesignTokens.rose700
-                                    : theme.primaryColor),
+                          color: isCompleted ? EduDesignTokens.slate400 : (isPastDue ? EduDesignTokens.rose700 : theme.primaryColor),
                         ),
                       ),
                     ],
@@ -859,13 +630,8 @@ class _MyHomePageState extends State<MyHomePage> {
                 ],
               ),
               trailing: PopupMenuButton<String>(
-                icon: const Icon(
-                  Icons.more_vert_rounded,
-                  color: EduDesignTokens.slate400,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
-                ),
+                icon: const Icon(Icons.more_vert_rounded, color: EduDesignTokens.slate400),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl)),
                 color: theme.cardColor,
                 onSelected: (value) {
                   if (value == 'edit') {
@@ -875,37 +641,8 @@ class _MyHomePageState extends State<MyHomePage> {
                   }
                 },
                 itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'edit',
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.edit_rounded,
-                          size: 18,
-                          color: theme.primaryColor,
-                        ),
-                        const SizedBox(width: 8),
-                        const Text('Edit'),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'delete',
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.delete_rounded,
-                          size: 18,
-                          color: systemExt.btnDangerText,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Delete',
-                          style: TextStyle(color: systemExt.btnDangerText),
-                        ),
-                      ],
-                    ),
-                  ),
+                  PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit_rounded, size: 18, color: theme.primaryColor), const SizedBox(width: 8), const Text('Edit')])),
+                  PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete_rounded, size: 18, color: systemExt.btnDangerText), const SizedBox(width: 8), Text('Delete', style: TextStyle(color: systemExt.btnDangerText))])),
                 ],
               ),
             ),
@@ -988,9 +725,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                   if (decryptedMap != null) {
                                     _showScannedStudentDetails(decryptedMap);
                                   } else {
-                                    _showErrorSnackBar(
-                                      'Invalid or Foreign QR Code Detected!',
-                                    );
+                                    _showErrorSnackBar('Invalid or Foreign QR Code Detected!');
                                   }
                                 }
                               },
@@ -1146,8 +881,7 @@ class _MyHomePageState extends State<MyHomePage> {
   // =========================================================================
   // ASYNC MODALS FOR DIRECTORY AND LIBRARY
   // =========================================================================
-  Future<Map<String, List<Map<String, dynamic>>>>
-  _fetchStaffFromBackend() async {
+  Future<Map<String, List<Map<String, dynamic>>>> _fetchStaffFromBackend() async {
     try {
       final token = await AuthService.getAuthToken() ?? '';
       final url = Uri.parse(
@@ -1207,9 +941,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: isDark
-                          ? EduDesignTokens.indigo50.withOpacity(0.15)
-                          : EduDesignTokens.indigo50.withOpacity(0.1),
+                      color: isDark ? EduDesignTokens.indigo50.withOpacity(0.15) : EduDesignTokens.indigo50.withOpacity(0.1),
                       shape: BoxShape.circle,
                     ),
                     child: SolarIcon(
@@ -1241,7 +973,7 @@ class _MyHomePageState extends State<MyHomePage> {
                           "Unable to connect to the directory. Please check your internet connection.",
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: EduDesignTokens.rose700,
+                            color: EduDesignTokens.rose700, 
                             fontWeight: FontWeight.w500,
                           ),
                         ),
@@ -1428,9 +1160,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: isDark
-                          ? EduDesignTokens.emerald50.withOpacity(0.15)
-                          : EduDesignTokens.emerald50.withOpacity(0.1),
+                      color: isDark ? EduDesignTokens.emerald50.withOpacity(0.15) : EduDesignTokens.emerald50.withOpacity(0.1),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
@@ -1462,7 +1192,7 @@ class _MyHomePageState extends State<MyHomePage> {
                           "Unable to connect to the Resources. Please check your internet connection.",
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: EduDesignTokens.rose700,
+                            color: EduDesignTokens.rose700, 
                             fontWeight: FontWeight.w500,
                           ),
                         ),
@@ -1761,8 +1491,7 @@ class _MyHomePageState extends State<MyHomePage> {
           Icons.public,
           'Website',
           EduDesignTokens.purple600,
-          () =>
-              _launchExternalUrl('https://erp.ddugu.ac.in/student_login.aspx'),
+          () => _launchExternalUrl('https://erp.ddugu.ac.in/student_login.aspx'),
         ),
       ],
     );
@@ -2294,7 +2023,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   _buildCampusWifiCard(),
                   const SizedBox(height: 32),
 
-                  // 💡 5. NEW: To-Do Tasks & Reminders Section
+                  // 5. To-Do Tasks & Reminders Section
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -2309,16 +2038,10 @@ class _MyHomePageState extends State<MyHomePage> {
                         icon: Container(
                           padding: const EdgeInsets.all(6),
                           decoration: BoxDecoration(
-                            color: Theme.of(
-                              context,
-                            ).primaryColor.withOpacity(0.15),
+                            color: Theme.of(context).primaryColor.withOpacity(0.15),
                             shape: BoxShape.circle,
                           ),
-                          child: Icon(
-                            Icons.add_task_rounded,
-                            color: Theme.of(context).primaryColor,
-                            size: 20,
-                          ),
+                          child: Icon(Icons.add_task_rounded, color: Theme.of(context).primaryColor, size: 20),
                         ),
                       ),
                     ],

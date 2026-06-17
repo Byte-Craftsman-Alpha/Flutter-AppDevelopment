@@ -260,6 +260,11 @@ async def handle_chat_delivery(message: dict, token: str):
     }
     
     db_response = supabase.table("GroupChats").insert(chat_entry).execute()
+    broadcast_notification(
+        title=f"New Message from {user['name']}",
+        body=chat_entry["message_body"][:100] + ("..." if len(chat_entry["message_body"]) > 100 else ""),
+        topic="general"
+    )
     return {"success": True, "data": db_response.data}
 
 @app.get("/api/chat/history")
