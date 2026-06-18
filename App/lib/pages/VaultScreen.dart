@@ -172,7 +172,7 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
       request.files.add(multipartFile);
 
       final response = await _activeUploadClient!.send(request);
-      final responseBody = await http.Response.fromStream(response);
+      // final responseBody = await http.Response.fromStream(response);
 
       // 💡 FIX: Reliably close the dialog using the tracker flag
       if (mounted && isDialogVisible) {
