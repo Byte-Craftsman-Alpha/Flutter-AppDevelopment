@@ -263,7 +263,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               controller: _passwordController,
                               obscureText: _isPasswordObscured,
                               enabled: !_isLoading,
-                              keyboardType: TextInputType.text,
+                              keyboardType: TextInputType.number,
                               style: textTheme.bodyLarge?.copyWith(fontSize: 14),
                               decoration: InputDecoration(
                                 labelText: 'Password',
