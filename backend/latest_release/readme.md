@@ -1,0 +1,1 @@
+keep the apps here only namely **EduPortal.apk**
