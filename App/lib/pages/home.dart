@@ -1159,13 +1159,13 @@ class _MyHomePageState extends State<MyHomePage> {
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: isDark
-                          ? EduDesignTokens.indigo50.withOpacity(0.15)
-                          : EduDesignTokens.indigo50.withOpacity(0.1),
+                          ? EduDesignTokens.sky500.withOpacity(0.15)
+                          : EduDesignTokens.sky500.withOpacity(0.1),
                       shape: BoxShape.circle,
                     ),
                     child: SolarIcon(
                       SolarIcons.UsersGroupRounded,
-                      color: theme.primaryColor,
+                      color: EduDesignTokens.sky500,
                     ),
                   ),
                   const SizedBox(width: 16),
@@ -1380,8 +1380,8 @@ class _MyHomePageState extends State<MyHomePage> {
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: isDark
-                          ? EduDesignTokens.emerald50.withOpacity(0.15)
-                          : EduDesignTokens.emerald50.withOpacity(0.1),
+                          ? EduDesignTokens.emerald500.withOpacity(0.15)
+                          : EduDesignTokens.emerald500.withOpacity(0.1),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
