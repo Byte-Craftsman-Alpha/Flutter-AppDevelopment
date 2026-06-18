@@ -33,14 +33,25 @@ jobs:
         working-directory: App
         run: flutter pub get
 
+      # 💡 NEW: Decode the Base64 Keystore string back into a physical .jks file
+      # We place it directly in App/android/app/ so build.gradle.kts can find it
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > App/android/app/upload-keystore.jks
+
+      # 💡 UPDATED: Pass the GitHub Secrets securely as environment variables
       - name: Build APK
         working-directory: App
+        env:
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
         run: flutter build apk --release --no-tree-shake-icons
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          # 💡 NEW: Automatically generates a unique tag/name based on the workflow run number
+          # Automatically generates a unique tag/name based on the workflow run number
           tag_name: build-${{ github.run_number }}
           name: Auto-Release Build ${{ github.run_number }}
           
