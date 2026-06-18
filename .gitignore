@@ -105,3 +105,6 @@ DerivedData/
 
 # Xcode
 *-XcodeEverywhere
+
+# keys
+keystore_b64.txt

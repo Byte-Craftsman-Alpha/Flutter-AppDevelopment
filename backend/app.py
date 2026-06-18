@@ -1,11 +1,12 @@
 import os
 import json
 import httpx
+import asyncio
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from supabase import create_client, Client
 from jose import JWTError, jwt
 import firebase_admin
@@ -16,13 +17,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 💡 Initialize Firebase Admin
-# cred = credentials.Certificate("./edu-portal-d0a62-firebase-adminsdk-fbsvc-c0b236157d.json")
 cred = credentials.Certificate(
     {
         "type": os.environ.get("type"),
         "project_id": os.environ.get("project_id"),
         "private_key_id": os.environ.get("private_key_id"),
-        "private_key": os.environ.get("private_key").replace('\\n', '\n'),
+        "private_key": os.environ.get("private_key", "").replace('\\n', '\n'),
         "client_email": os.environ.get("client_email"),
         "client_id": os.environ.get("client_id"),
         "auth_uri": os.environ.get("auth_uri"),
@@ -56,8 +56,8 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 # 🔒 JWT Token Configuration Requirements
 JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
-JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM")
-ACCESS_TOKEN_EXPIRE_MINUTES = os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES")
+JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 
 # Initialize Administrative Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
@@ -76,7 +76,7 @@ def get_field_insensitive(data: Dict[str, Any], target_keys: List[str], default_
 
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=int(ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
@@ -280,8 +280,6 @@ async def handle_chat_delivery(message: dict, token: str):
     
     db_response = supabase.table("GroupChats").insert(chat_entry).execute()
     
-    # 💡 BUG FIX: Added `await` here. Since it's an async function, 
-    # it won't actually trigger the notification if you don't await it.
     await broadcast_notification(
         title=f"New Message from {user['name']}",
         body=chat_entry["message_body"][:100] + ("..." if len(chat_entry["message_body"]) > 100 else ""),
@@ -415,105 +413,17 @@ async def broadcast_notification(title: str, body: str, topic: str):
                 body=body,
             ),
             topic=topic,
-            
-            # --- ANDROID CONFIGURATION ---
-            android=messaging.AndroidConfig(
-                priority='high' # Forces immediate delivery and wakes sleeping devices
-            ),
-            
-            # --- APPLE (iOS) CONFIGURATION ---
+            android=messaging.AndroidConfig(priority='high'),
             apns=messaging.APNSConfig(
-                headers={
-                    'apns-priority': '10', # '10' means send immediately. '5' is for background.
-                },
-                payload=messaging.APNSPayload(
-                    aps=messaging.Aps(
-                        sound='default', # Ensures it triggers an alert
-                    )
-                )
+                headers={'apns-priority': '10'},
+                payload=messaging.APNSPayload(aps=messaging.Aps(sound='default'))
             )
         )
         response = messaging.send(message)
         return {"success": True, "message_id": response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-# -------------------------------------------------------------------------
-# 7. APP UPDATER & DOWNLOAD SERVICES
-# -------------------------------------------------------------------------
-APK_FILE_PATH = "./latest_release/EduPortal.apk" 
-
-def get_apk_metadata(file_path: str) -> dict:
-    """Helper function to extract metadata directly from the APK file."""
-    if not os.path.exists(file_path):
-        return {}
-        
-    try:
-        # Import dynamically so the rest of the app doesn't crash if it's missing
-        from pyaxmlparser import APK
-        apk = APK(file_path)
-        
-        # Use file modification time as the dynamic build date
-        mtime = os.path.getmtime(file_path)
-        build_date = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d')
-        
-        return {
-            "app_name": apk.application,
-            "package_name": apk.package,
-            "version_name": apk.version_name,
-            "version_code": int(apk.version_code) if apk.version_code else 1,
-            "build_date": build_date,
-        }
-    except ImportError:
-        print("Warning: 'pyaxmlparser' not installed. Please run: pip install pyaxmlparser")
-        return {}
-    except Exception as e:
-        print(f"Error parsing APK metadata: {e}")
-        return {}
-
-@app.get("/api/app/details")
-async def get_app_details():
-    """
-    Returns metadata about the latest version of the app dynamically parsed from the APK.
-    Useful for prompting users to update when a new version is available.
-    """
-    if not os.path.exists(APK_FILE_PATH):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="The requested APK file is not currently available on the server."
-        )
-        
-    apk_data = get_apk_metadata(APK_FILE_PATH)
     
-    return {
-        "app_name": apk_data.get("app_name", "EduPortal"),
-        "package_name": apk_data.get("package_name", "com.eduportal.app"),
-        "version_name": apk_data.get("version_name", "1.0.0"),
-        "version_code": apk_data.get("version_code", 1),
-        "build_date": apk_data.get("build_date", "2026-06-17"),
-        # Note: force_update and release_notes are server-side business logic 
-        # and aren't stored natively in the APK manifest. Keep them static or move to a DB.
-        "force_update": False,
-        "release_notes": "Latest version deployed on server."
-    }
-
-@app.get("/api/app/download")
-async def download_app():
-    """
-    Serves the APK file directly to the client.
-    """
-    if not os.path.exists(APK_FILE_PATH):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="The requested APK file is not currently available on the server."
-        )
-    
-    return FileResponse(
-        path=APK_FILE_PATH,
-        media_type="application/vnd.android.package-archive",
-        filename="EduPortal.apk" 
-    )
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

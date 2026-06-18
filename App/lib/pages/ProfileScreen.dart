@@ -33,6 +33,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String _appVersion = '';
   String _appPackage = '';
 
+  // 💡 GitHub Repository Info (Replace these with your actual info)
+  final String _githubOwner = 'Byte-Craftsman-Alpha';
+  final String _githubRepo = 'Flutter-AppDevelopment';
+  String _apkDownloadUrl = '';
+
   // 💡 Update Control Variables
   bool _isCheckingForUpdate = false;
   bool _updateAvailable = false;
@@ -82,7 +87,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ]);
   }
 
-  // 💡 MANUAL ROUTE: Check for APK updates (No JWT Auth Required)
+  // 💡 MANUAL ROUTE: Check for APK updates directly from GitHub
   Future<void> _manualCheckForUpdates() async {
     setState(() {
       _isCheckingForUpdate = true;
@@ -91,23 +96,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
 
     try {
-      // Direct call to gateway without auth wrapper
-      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/app/details');
-      final response = await http.get(url).timeout(const Duration(seconds: 10));
+      // Direct call to GitHub API
+      final url = Uri.parse('https://api.github.com/repos/$_githubOwner/$_githubRepo/releases/latest');
+      final response = await http.get(
+        url,
+        headers: {"Accept": "application/vnd.github.v3+json"}
+      ).timeout(const Duration(seconds: 10));
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final latestVersionCode = data['version_code'] as int? ?? 0;
-        
+        final String tagName = data['tag_name'] ?? 'v1.0.0';
+        final String latestVersion = tagName.replaceAll('v', '').trim();
+        final String releaseNotes = data['body'] ?? 'No release notes provided.';
+
+        // Find the APK asset in the release payload
+        final List<dynamic> assets = data['assets'] ?? [];
+        String downloadUrl = '';
+        for (var asset in assets) {
+          if (asset['name'].toString().endsWith('.apk')) {
+            downloadUrl = asset['browser_download_url'];
+            break;
+          }
+        }
+
         PackageInfo packageInfo = await PackageInfo.fromPlatform();
-        int currentVersionCode = int.tryParse(packageInfo.buildNumber) ?? 0;
+        final currentVersion = packageInfo.version; // e.g., "1.0.0"
+        
+        // Compare versions locally
+        bool isNewer = _compareVersions(latestVersion, currentVersion) > 0;
         
         if (mounted) {
-          if (latestVersionCode > currentVersionCode) {
+          if (isNewer && downloadUrl.isNotEmpty) {
             setState(() {
               _updateAvailable = true;
-              _latestVersion = data['version_name'] ?? 'Unknown';
-              _releaseNotes = data['release_notes'] ?? '';
+              _latestVersion = latestVersion;
+              _releaseNotes = releaseNotes;
+              _apkDownloadUrl = downloadUrl; // Store the direct CDN link
+            });
+          } else if (downloadUrl.isEmpty) {
+            setState(() {
+              _upToDateMessage = 'No APK file found in the latest release.';
             });
           } else {
             setState(() {
@@ -115,13 +143,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
             });
           }
         }
+      } else if (response.statusCode == 404) {
+         if (mounted) {
+           setState(() {
+              _upToDateMessage = 'No releases found on GitHub yet.';
+           });
+         }
       } else {
-        throw Exception("Server Error");
+        throw Exception("GitHub API Error: ${response.statusCode}");
       }
     } catch (e) {
       debugPrint("App update check failed: $e");
       if (mounted) {
-        _showToast("Failed to connect to update server.", isError: true);
+        _showToast("Failed to connect to GitHub update server.", isError: true);
       }
     } finally {
       if (mounted) {
@@ -130,8 +164,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  // Helper to securely compare semantic versions (e.g., 1.0.5 vs 1.0.4)
+  int _compareVersions(String v1, String v2) {
+    List<int> v1Parts = v1.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    List<int> v2Parts = v2.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    for (int i = 0; i < max(v1Parts.length, v2Parts.length); i++) {
+      int p1 = i < v1Parts.length ? v1Parts[i] : 0;
+      int p2 = i < v2Parts.length ? v2Parts[i] : 0;
+      if (p1 > p2) return 1;
+      if (p1 < p2) return -1;
+    }
+    return 0;
+  }
+
   // 💡 APP UPDATER: Persistent Download & Install
   Future<void> _downloadAndInstallUpdate() async {
+    if (_apkDownloadUrl.isEmpty) {
+       _showToast("Download URL not found.", isError: true);
+       return;
+    }
+
     setState(() {
       _isDownloading = true;
       _downloadProgress = 0.0;
@@ -140,8 +192,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
 
     try {
-      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/app/download');
+      // Download directly from GitHub's CDN using the extracted asset URL
+      final url = Uri.parse(_apkDownloadUrl);
       final request = http.Request('GET', url);
+      // GitHub redirects asset links to an AWS S3 bucket. http.Client handles this natively.
       final response = await http.Client().send(request);
 
       if (response.statusCode != 200) {
@@ -214,7 +268,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return '${(bytes / pow(1024, i)).toStringAsFixed(1)} ${suffixes[i]}';
   }
 
-  // ... (Keep existing fetch and sync methods exactly as they are)
   Future<void> _fetchAvailableSchedules() async {
     if (!mounted) return;
     setState(() => _isScheduleLoading = true);
