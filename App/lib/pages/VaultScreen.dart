@@ -29,7 +29,7 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   String? _localVaultDirectory;
 
-  // 💡 State flags specifically for operations
+  // State flags specifically for operations
   bool _isUploadingFile = false;
   http.Client? _activeUploadClient;
   final Map<String, http.Client> _activeDownloadClients = {};
@@ -67,7 +67,7 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     setState(() => _isLoading = true);
     try {
       final token = await AuthService.getAuthToken();
-      // 💡 FIX: Safely parse URL using Uri.https to automatically encode the token
+      // Safely parse URL using Uri.https to automatically encode the token
       final url = Uri.https(
         'flutter-app-development-mu.vercel.app',
         '/api/vault/records',
@@ -102,7 +102,6 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     }
   }
 
-  // 💡 Streamed Secure Upload with Live Progress Dialog
   Future<void> _uploadDocument() async {
     if (_isUploadingFile) return;
 
@@ -131,7 +130,6 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
         totalBytes: totalBytes,
         isUpload: true,
         onCancel: () {
-          // 💡 FIX: Set flag to prevent double-popping
           isDialogVisible = false;
           Navigator.pop(context);
           _activeUploadClient?.close();
@@ -172,9 +170,7 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
       request.files.add(multipartFile);
 
       final response = await _activeUploadClient!.send(request);
-      // final responseBody = await http.Response.fromStream(response);
 
-      // 💡 FIX: Reliably close the dialog using the tracker flag
       if (mounted && isDialogVisible) {
         Navigator.pop(context);
         isDialogVisible = false;
@@ -192,7 +188,6 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
         isError: true,
       );
     } catch (e) {
-      // 💡 FIX: If an exception is thrown during upload, ensure dialog is still closed
       if (mounted && isDialogVisible) {
         Navigator.pop(context);
         isDialogVisible = false;
@@ -216,14 +211,12 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
   Future<String?> _resolveCloudDownloadUrl(String fileId) async {
     try {
       final token = await AuthService.getAuthToken();
-      // 💡 FIX: Safely parse URL using Uri.https. Special chars like '+' in base64 IDs won't break anymore.
       final url = Uri.https(
         'flutter-app-development-mu.vercel.app',
         '/api/files/resolve',
         {'file_id': fileId, 'token': token ?? ''},
       );
 
-      // 💡 FIX: Added timeout to prevent hanging forever
       final response = await http.get(url).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
@@ -236,7 +229,6 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     return null;
   }
 
-  // 💡 Streamed Secure Download with Live Progress Dialog
   Future<void> _handleDocumentAction(
     Map<String, dynamic> item, {
     bool shareOnly = false,
@@ -273,13 +265,12 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
           isUpload: false,
           onCancel: () {
             isDialogVisible = false;
-            Navigator.pop(context); // Close dialog safely
+            Navigator.pop(context);
             client.close();
           },
         );
         isDialogVisible = true;
 
-        // 1. Resolve URL
         _transferProgressNotifier.value = TransferProgress(
           0,
           totalSize,
@@ -291,7 +282,6 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
           throw Exception("Could not map file to a secure download path.");
         }
 
-        // 2. Stream Data
         final request = http.Request('GET', Uri.parse(resolvedUrl));
         final response = await client
             .send(request)
@@ -314,7 +304,6 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
 
           await sink.close();
 
-          // 💡 FIX: Safely pop dialog using boolean flag
           if (mounted && isDialogVisible) {
             Navigator.pop(context);
             isDialogVisible = false;
@@ -326,7 +315,6 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
         }
       }
 
-      // Execute subsequent action (Open or Share)
       if (shareOnly) {
         await Share.shareXFiles([
           XFile(localFile.path),
@@ -341,15 +329,12 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
         }
       }
     } catch (e) {
-      // 💡 BUG FIXED HERE: This catch block previously did not pop the dialog.
-      // If any network drop/error occurred, it stayed stuck on "Negotiating tunnel" forever.
       if (mounted && isDialogVisible) {
         Navigator.pop(context);
         isDialogVisible = false;
       }
 
       if (e is http.ClientException || e is TimeoutException) {
-        // Clean up partial file on cancel or drop
         final String localFilePath = p.join(
           _localVaultDirectory!,
           '${item['id']}_$fileName',
@@ -371,7 +356,6 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
       final recordId = item['id'].toString();
       final token = await AuthService.getAuthToken();
 
-      // 💡 FIX: Safely parse URL using Uri.https
       final url = Uri.https(
         'flutter-app-development-mu.vercel.app',
         '/api/vault/delete',
@@ -465,18 +449,8 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     try {
       final date = DateTime.parse(isoString).toLocal();
       final List<String> months = [
-        'Jan',
-        'Feb',
-        'Mar',
-        'Apr',
-        'May',
-        'Jun',
-        'Jul',
-        'Aug',
-        'Sep',
-        'Oct',
-        'Nov',
-        'Dec',
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
       ];
       return '${date.day} ${months[date.month - 1]}, ${date.year}';
     } catch (_) {
@@ -484,7 +458,7 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     }
   }
 
-  // 💡 ValueNotifier to broadcast progress smoothly without rebuilding the entire UI
+  // ValueNotifier to broadcast progress smoothly without rebuilding the entire UI
   final ValueNotifier<TransferProgress> _transferProgressNotifier =
       ValueNotifier(TransferProgress(0, 1));
 
@@ -850,7 +824,6 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
     final String fileId = item['file_id']?.toString() ?? '';
     final fileName = item['file_name']?.toString() ?? 'Document';
     final fileSize = _formatFileSize(item['file_size'] as int? ?? 0);
-    // Restored the date formatter
     final date = _formatDate(item['created_at']?.toString() ?? '');
     final extension = item['extension']?.toString().toLowerCase() ?? 'file';
 
@@ -936,73 +909,76 @@ class _VaultPageState extends State<VaultPage> with TickerProviderStateMixin {
       margin: const EdgeInsets.only(bottom: 8),
       child: EduComponents.card(
         context: context,
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 4,
-          ),
-          onTap: () => _handleDocumentAction(item),
-          onLongPress: () => _showVaultActionSheet(item),
-          leading: Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: systemExt.btnSoftBg,
-              borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+        // 💡 FIX: Wrapped the ListTile in a transparent Material widget
+        child: Material(
+          color: Colors.transparent,
+          child: ListTile(
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 4,
             ),
-            child: EduComponents.icon(
-              context: context,
-              iconData: SolarIcon(
-                getFileIcon(),
-                weight: SolarIconWeight.outline,
+            onTap: () => _handleDocumentAction(item),
+            onLongPress: () => _showVaultActionSheet(item),
+            leading: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: systemExt.btnSoftBg,
+                borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
               ),
-              color: systemExt.btnSoftText,
-              size: 24,
-            ),
-          ),
-          title: Text(
-            fileName,
-            style: textTheme.bodyLarge?.copyWith(
-              fontWeight: FontWeight.bold,
-              fontSize: 13,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          // Integrated the date into the subtitle row
-          subtitle: Padding(
-            padding: const EdgeInsets.only(top: 4.0),
-            child: Row(
-              children: [
-                Text(
-                  '${extension.toUpperCase()} · $fileSize',
-                  style: textTheme.bodyMedium?.copyWith(fontSize: 11),
+              child: EduComponents.icon(
+                context: context,
+                iconData: SolarIcon(
+                  getFileIcon(),
+                  weight: SolarIconWeight.outline,
                 ),
-                const SizedBox(width: 8),
-                EduComponents.icon(
-                  context: context,
-                  iconData: const SolarIcon(
-                    SolarIcons.ClockCircle,
-                    weight: SolarIconWeight.outline,
+                color: systemExt.btnSoftText,
+                size: 24,
+              ),
+            ),
+            title: Text(
+              fileName,
+              style: textTheme.bodyLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 4.0),
+              child: Row(
+                children: [
+                  Text(
+                    '${extension.toUpperCase()} · $fileSize',
+                    style: textTheme.bodyMedium?.copyWith(fontSize: 11),
                   ),
-                  size: 11,
-                  color: EduDesignTokens.slate400,
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    date,
-                    style: textTheme.bodyMedium?.copyWith(
-                      fontSize: 11,
-                      color: EduDesignTokens.slate400,
+                  const SizedBox(width: 8),
+                  EduComponents.icon(
+                    context: context,
+                    iconData: const SolarIcon(
+                      SolarIcons.ClockCircle,
+                      weight: SolarIconWeight.outline,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    size: 11,
+                    color: EduDesignTokens.slate400,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      date,
+                      style: textTheme.bodyMedium?.copyWith(
+                        fontSize: 11,
+                        color: EduDesignTokens.slate400,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
             ),
+            trailing: buildTrailingWidget(),
           ),
-          trailing: buildTrailingWidget(),
         ),
       ),
     );
