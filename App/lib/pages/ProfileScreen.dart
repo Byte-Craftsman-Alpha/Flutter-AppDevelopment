@@ -13,6 +13,7 @@ import '../constants/theme.dart';
 
 import '../services/auth_service.dart';
 
+import 'CalendarScreen.dart';
 import 'login.dart'; 
 
 class ProfileScreen extends StatefulWidget {
@@ -602,6 +603,37 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           _buildProfileRow('Mobile Number', _extractField(['mobile', 'mobile_no', 'phone'])),
                           const Divider(height: 24, thickness: 1),
                           _buildProfileRow('Enrollment No.', _extractField(['enrollment_no', 'enrollment', 'enrollment no', 'enrollmentNo'])),
+                          const Divider(height: 24, thickness: 1),
+                          _buildProfileRow('ABC ID.', _extractField(['apaar_id'])),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+                    Text('Personal Details', style: textTheme.titleMedium),
+                    const SizedBox(height: 12),
+
+                    // Academic Details Container
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).cardColor,
+                        borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
+                        border: Border.all(color: systemExt.borderNeutral),
+                      ),
+                      child: Column(
+                        children: [
+                          _buildProfileRow('Father\'s Name', _extractField(['father_name', 'father'])),
+                          const Divider(height: 24, thickness: 1),
+                          _buildProfileRow('Mother\'s Name', _extractField(['mother_name', 'mother'])),
+                          const Divider(height: 24, thickness: 1),
+                          _buildProfileRow('Gender', _extractField(['gender'])),
+                          const Divider(height: 24, thickness: 1),
+                          _buildProfileRow('Category', _extractField(['category'])),
+                          const Divider(height: 24, thickness: 1),
+                          _buildProfileRow('Address', _extractField(['address'])),
+                          const Divider(height: 24, thickness: 1),
+                          _buildProfileRow('Aadhaar No.', _extractField(['aadhaar'])),
                         ],
                       ),
                     ),

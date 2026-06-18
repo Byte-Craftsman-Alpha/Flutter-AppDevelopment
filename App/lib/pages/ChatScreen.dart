@@ -1286,17 +1286,18 @@ class _ChatGroupPageState extends State<ChatGroupPage> with TickerProviderStateM
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(color: theme.cardColor, border: Border(top: BorderSide(color: systemExt.borderNeutral))),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Padding(
             padding: const EdgeInsets.only(bottom: 4),
             child: IconButton(
               onPressed: _isUploadingFile ? null : _handleAttachmentSelection,
               style: IconButton.styleFrom(backgroundColor: Colors.transparent, foregroundColor: EduDesignTokens.slate800, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl))),
-              icon: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.AddSquare, weight: SolarIconWeight.outline), color: EduDesignTokens.slate400, size: 18),
+              icon: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.AddSquare, weight: SolarIconWeight.outline), color: EduDesignTokens.slate400, size: 28),
             ),
           ),
           Expanded(
