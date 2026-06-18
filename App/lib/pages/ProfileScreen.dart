@@ -9,8 +9,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_file/open_file.dart';
 import 'package:url_launcher/url_launcher.dart'; 
-import '../services/auth_service.dart';
 import '../constants/theme.dart';
+
+import '../services/auth_service.dart';
+
 import 'login.dart'; 
 
 class ProfileScreen extends StatefulWidget {
@@ -599,7 +601,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           const Divider(height: 24, thickness: 1),
                           _buildProfileRow('Mobile Number', _extractField(['mobile', 'mobile_no', 'phone'])),
                           const Divider(height: 24, thickness: 1),
-                          _buildProfileRow('Enrollment No.', _extractField(['enrollment_no', 'enrollment', 'enrollmentno', 'enrollmentNo'])),
+                          _buildProfileRow('Enrollment No.', _extractField(['enrollment_no', 'enrollment', 'enrollment no', 'enrollmentNo'])),
                         ],
                       ),
                     ),
