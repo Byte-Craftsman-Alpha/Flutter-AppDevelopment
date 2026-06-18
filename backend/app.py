@@ -368,7 +368,28 @@ async def sync_profile(token: str):
     response = supabase.table("StudentDetails").select("*").eq("Roll_No", user["roll_number"]).execute()
     if not response.data:
         raise HTTPException(status_code=404, detail="Student record not found.")
-    return response.data[0]
+    
+    student = response.data[0]
+    
+    # Return the exact same structured dictionary as your login route
+    return {
+        "id": get_field_insensitive(student, ["roll_no", "roll_number"]),
+        "name": get_field_insensitive(student, ["name"], "Student"),
+        "roll_number": get_field_insensitive(student, ["roll_no", "roll_number"]),
+        "email": get_field_insensitive(student, ["email"]),
+        "department": get_field_insensitive(student, ["programme", "department", "dept", "branch"]),
+        "semester": get_field_insensitive(student, ["semester"], "4"),
+        "dob": get_field_insensitive(student, ["dob", "date_of_birth"]),
+        "Mobile_No": get_field_insensitive(student, ["mobile_no", "mobile", "phone"]),
+        "Aadhaar": get_field_insensitive(student, ["aadhaar", "aadhaar_no"]),
+        "enrollment_no": get_field_insensitive(student, ["enrollment_no", "enrollment"]),
+        "apaar_id": get_field_insensitive(student, ["apaar_id", "apaar"]),
+        "address": get_field_insensitive(student, ["address"]),
+        "category": get_field_insensitive(student, ["category"]),
+        "gender": get_field_insensitive(student, ["gender"]),
+        "father_name": get_field_insensitive(student, ["father_name", "father"]),
+        "mother_name": get_field_insensitive(student, ["mother_name", "mother"]),
+    }
 
 @app.get("/api/directory/staff")
 async def fetch_staff_directory(token: str):
