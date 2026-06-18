@@ -8,6 +8,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_file/open_file.dart';
+import 'package:url_launcher/url_launcher.dart'; 
 import '../services/auth_service.dart';
 import '../constants/theme.dart';
 import 'login.dart'; 
@@ -25,25 +26,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isScheduleLoading = true;
   bool _isSyncingProfile = false;
   
-  // 💡 Local state cache to hold freshly synced backend data
   Map<String, dynamic>? _liveUserData;
 
-  // 💡 App Version State Variables
   String _appName = 'EduPortal';
   String _appVersion = '';
   String _appPackage = '';
 
-  // 💡 GitHub Repository Info (Replace these with your actual info)
   final String _githubOwner = 'Byte-Craftsman-Alpha';
   final String _githubRepo = 'Flutter-AppDevelopment';
   String _apkDownloadUrl = '';
+  
+  // Variables for Caching and Links
+  String _releaseHtmlUrl = ''; 
+  bool _isApkCached = false;
+  String _cachedApkPath = '';
 
-  // 💡 Update Control Variables
   bool _isCheckingForUpdate = false;
   bool _updateAvailable = false;
   String _latestVersion = '';
-  String _releaseNotes = '';
-  String _upToDateMessage = ''; // Holds the "already latest" message
+  String _upToDateMessage = ''; 
   bool _isDownloading = false;
   double _downloadProgress = 0.0;
   int _downloadedBytes = 0;
@@ -63,7 +64,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (mounted) {
         setState(() {
           _appName = packageInfo.appName;
-          _appVersion = packageInfo.version;
+          _appVersion = '${packageInfo.version}+${packageInfo.buildNumber}';
           _appPackage = packageInfo.packageName;
         });
       }
@@ -80,23 +81,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
       });
     }
 
-    // Securely fetch available groups and live profile
     await Future.wait([
       _fetchAvailableSchedules(),
       _syncLiveProfile(silent: true),
     ]);
   }
 
-  // 💡 MANUAL ROUTE: Check for APK updates directly from GitHub
   Future<void> _manualCheckForUpdates() async {
     setState(() {
       _isCheckingForUpdate = true;
       _upToDateMessage = '';
       _updateAvailable = false;
+      _isApkCached = false;
     });
 
     try {
-      // Direct call to GitHub API
       final url = Uri.parse('https://api.github.com/repos/$_githubOwner/$_githubRepo/releases/latest');
       final response = await http.get(
         url,
@@ -105,11 +104,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final String tagName = data['tag_name'] ?? 'v1.0.0';
-        final String latestVersion = tagName.replaceAll('v', '').trim();
-        final String releaseNotes = data['body'] ?? 'No release notes provided.';
+        
+        final String releaseName = data['name'] ?? ''; 
+        final String htmlUrl = data['html_url'] ?? ''; 
 
-        // Find the APK asset in the release payload
+        final RegExp versionRegExp = RegExp(r'\(v(.*?)\)');
+        final match = versionRegExp.firstMatch(releaseName);
+        final String latestVersion = match != null ? match.group(1)! : '0.0.0';
+
         final List<dynamic> assets = data['assets'] ?? [];
         String downloadUrl = '';
         for (var asset in assets) {
@@ -118,36 +120,52 @@ class _ProfileScreenState extends State<ProfileScreen> {
             break;
           }
         }
-
-        PackageInfo packageInfo = await PackageInfo.fromPlatform();
-        final currentVersion = packageInfo.version; // e.g., "1.0.0"
         
-        // Compare versions locally
-        bool isNewer = _compareVersions(latestVersion, currentVersion) > 0;
+        bool isNewer = _compareVersions(latestVersion, _appVersion) > 0;
         
         if (mounted) {
-          if (isNewer && downloadUrl.isNotEmpty) {
+          if (isNewer && downloadUrl.isNotEmpty && latestVersion != '0.0.0') {
+            
+            // Check if this specific version is already downloaded
+            final dir = await getExternalStorageDirectory();
+            final expectedFilePath = '${dir!.path}/EduPortal_v$latestVersion.apk';
+            final file = File(expectedFilePath);
+            final bool exists = await file.exists();
+
+            // Cleanup old APKs from previous updates to save space
+            try {
+              final files = dir.listSync();
+              for (var f in files) {
+                if (f.path.contains('EduPortal_v') && f.path.endsWith('.apk') && f.path != expectedFilePath) {
+                  f.deleteSync(); 
+                }
+              }
+            } catch (e) {
+              debugPrint("Cleanup error: $e");
+            }
+
             setState(() {
               _updateAvailable = true;
               _latestVersion = latestVersion;
-              _releaseNotes = releaseNotes;
-              _apkDownloadUrl = downloadUrl; // Store the direct CDN link
+              _releaseHtmlUrl = htmlUrl;
+              _apkDownloadUrl = downloadUrl; 
+              _isApkCached = exists;
+              _cachedApkPath = expectedFilePath;
             });
+
           } else if (downloadUrl.isEmpty) {
             setState(() {
               _upToDateMessage = 'No APK file found in the latest release.';
             });
           } else {
             setState(() {
-              _upToDateMessage = 'The app installed (v$_appVersion) is the latest version. No newer versions are released yet, stay tuned!';
+              _upToDateMessage = 'The app installed (v$_appVersion) is the latest version. Stay tuned!';
             });
           }
         }
       } else if (response.statusCode == 404) {
          if (mounted) {
-           setState(() {
-              _upToDateMessage = 'No releases found on GitHub yet.';
-           });
+           setState(() => _upToDateMessage = 'No releases found on GitHub yet.');
          }
       } else {
         throw Exception("GitHub API Error: ${response.statusCode}");
@@ -164,21 +182,43 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // Helper to securely compare semantic versions (e.g., 1.0.5 vs 1.0.4)
   int _compareVersions(String v1, String v2) {
-    List<int> v1Parts = v1.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    List<int> v2Parts = v2.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    for (int i = 0; i < max(v1Parts.length, v2Parts.length); i++) {
-      int p1 = i < v1Parts.length ? v1Parts[i] : 0;
-      int p2 = i < v2Parts.length ? v2Parts[i] : 0;
+    List<String> v1Parts = v1.split('+');
+    List<String> v2Parts = v2.split('+');
+
+    List<int> v1SemVer = v1Parts[0].split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    List<int> v2SemVer = v2Parts[0].split('.').map((e) => int.tryParse(e) ?? 0).toList();
+
+    for (int i = 0; i < max(v1SemVer.length, v2SemVer.length); i++) {
+      int p1 = i < v1SemVer.length ? v1SemVer[i] : 0;
+      int p2 = i < v2SemVer.length ? v2SemVer[i] : 0;
       if (p1 > p2) return 1;
       if (p1 < p2) return -1;
     }
+
+    int b1 = v1Parts.length > 1 ? (int.tryParse(v1Parts[1]) ?? 0) : 0;
+    int b2 = v2Parts.length > 1 ? (int.tryParse(v2Parts[1]) ?? 0) : 0;
+
+    if (b1 > b2) return 1;
+    if (b1 < b2) return -1;
+
     return 0;
   }
 
-  // 💡 APP UPDATER: Persistent Download & Install
+  // Handles Caching vs Downloading and Explicit APK Launch
   Future<void> _downloadAndInstallUpdate() async {
+    // 1. If it's already downloaded, just install it!
+    if (_isApkCached && _cachedApkPath.isNotEmpty) {
+      _showToast("Launching Installer...", isError: false);
+      final result = await OpenFile.open(
+        _cachedApkPath,
+        type: 'application/vnd.android.package-archive'
+      );
+      debugPrint("Install Status: ${result.message}");
+      return;
+    }
+
+    // 2. Otherwise, start the download process
     if (_apkDownloadUrl.isEmpty) {
        _showToast("Download URL not found.", isError: true);
        return;
@@ -192,29 +232,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
 
     try {
-      // Download directly from GitHub's CDN using the extracted asset URL
       final url = Uri.parse(_apkDownloadUrl);
       final request = http.Request('GET', url);
-      // GitHub redirects asset links to an AWS S3 bucket. http.Client handles this natively.
       final response = await http.Client().send(request);
 
-      if (response.statusCode != 200) {
-        throw Exception('Server refused file transfer.');
-      }
+      if (response.statusCode != 200) throw Exception('Server refused file transfer.');
 
       _totalBytes = response.contentLength ?? 0;
       
-      // 💡 Persist to External Storage: Prevents deletion on restart.
-      // Saving as 'EduPortal_Update.apk' guarantees that every new download 
-      // overwrites the old one, preventing storage clutter!
-      final dir = await getExternalStorageDirectory();
-      final filePath = '${dir!.path}/EduPortal_Update.apk';
-      final file = File(filePath);
-      
-      // Clear incomplete fragments if they exist
-      if (await file.exists()) {
-        await file.delete();
-      }
+      final file = File(_cachedApkPath);
+      if (await file.exists()) await file.delete();
       
       final sink = file.openWrite();
 
@@ -224,9 +251,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _downloadedBytes += chunk.length;
           if (mounted) {
             setState(() {
-              if (_totalBytes > 0) {
-                _downloadProgress = _downloadedBytes / _totalBytes;
-              }
+              if (_totalBytes > 0) _downloadProgress = _downloadedBytes / _totalBytes;
             });
           }
         },
@@ -236,12 +261,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
           if (mounted) {
             setState(() {
               _isDownloading = false;
-              _updateAvailable = false; 
+              _isApkCached = true; // Mark as cached now!
             });
             _showToast("Download Complete. Launching Installer...", isError: false);
           }
-          // Launch the Android Installer
-          await OpenFile.open(filePath);
+          // Launch the Android Installer explicitly
+          final result = await OpenFile.open(
+            _cachedApkPath,
+            type: 'application/vnd.android.package-archive'
+          );
+          debugPrint("Install Status: ${result.message}");
         },
         onError: (e) async {
           await sink.close();
@@ -261,13 +290,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  // Method to open the GitHub Release Page URL
+  Future<void> _openReleaseUrl() async {
+    if (_releaseHtmlUrl.isEmpty) return;
+    final Uri url = Uri.parse(_releaseHtmlUrl);
+    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+      _showToast("Could not open the release page.", isError: true);
+    }
+  }
+
   String _formatBytes(int bytes) {
     if (bytes <= 0) return "0 B";
     const suffixes = ["B", "KB", "MB", "GB"];
     var i = (log(bytes) / log(1024)).floor();
     return '${(bytes / pow(1024, i)).toStringAsFixed(1)} ${suffixes[i]}';
   }
-
+  
   Future<void> _fetchAvailableSchedules() async {
     if (!mounted) return;
     setState(() => _isScheduleLoading = true);
@@ -412,7 +450,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     Text('Student Profile', style: textTheme.titleLarge?.copyWith(fontSize: 20, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 24),
 
-                    // 💡 Profile Identity Card
+                    // Profile Identity Card
                     Container(
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
@@ -498,7 +536,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     Text('Timetable Configuration', style: textTheme.titleMedium),
                     const SizedBox(height: 12),
 
-                    // 💡 Schedule Dropdown Configuration
+                    // Schedule Dropdown Configuration
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       decoration: BoxDecoration(
@@ -541,7 +579,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     Text('Academic Identity', style: textTheme.titleMedium),
                     const SizedBox(height: 12),
 
-                    // 💡 Academic Details Container
+                    // Academic Details Container
                     Container(
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
@@ -568,7 +606,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                     const SizedBox(height: 36),
 
-                    // 💡 App Update Prompt Section (Explicit Manual Trigger)
+                    // App Update Prompt Section (Explicit Manual Trigger)
                     Text('System Updates', style: textTheme.titleMedium),
                     const SizedBox(height: 12),
                     _buildSystemUpdateSection(),
@@ -613,7 +651,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // 💡 System Update UI Section
+  // System Update UI Section
   Widget _buildSystemUpdateSection() {
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
     final textTheme = Theme.of(context).textTheme;
@@ -638,7 +676,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // If an update IS available
           if (_updateAvailable) ...[
             Row(
               children: [
@@ -653,28 +690,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('Update Available (v$_latestVersion)', style: textTheme.titleMedium?.copyWith(color: EduDesignTokens.indigo600)),
-                      Text('A new version is ready to install.', style: textTheme.bodyMedium),
+                      Text(_isApkCached ? 'Update is ready to install.' : 'A new version is ready to download.', style: textTheme.bodyMedium),
                     ],
                   ),
                 ),
               ],
             ),
-            if (_releaseNotes.isNotEmpty) ...[
+            
+            if (_releaseHtmlUrl.isNotEmpty) ...[
               const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                width: double.infinity,
-                decoration: BoxDecoration(color: systemExt.btnSoftBg, borderRadius: BorderRadius.circular(EduDesignTokens.radiusM)),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text("Release Notes", style: textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 4),
-                    Text(_releaseNotes, style: textTheme.bodyMedium?.copyWith(fontSize: 13)),
-                  ],
+              InkWell(
+                onTap: _openReleaseUrl,
+                borderRadius: BorderRadius.circular(EduDesignTokens.radiusM),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: systemExt.btnSoftBg, 
+                    borderRadius: BorderRadius.circular(EduDesignTokens.radiusM),
+                    border: Border.all(color: systemExt.borderNeutral.withOpacity(0.5))
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text("View Release Details on GitHub", style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, color: Theme.of(context).primaryColor)),
+                      Icon(Icons.open_in_new, size: 16, color: Theme.of(context).primaryColor),
+                    ],
+                  ),
                 ),
               ),
             ],
+
             const SizedBox(height: 20),
             if (_isDownloading)
               Column(
@@ -716,13 +761,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     child: EduComponents.primaryGradientButton(
                       context: context,
                       onPressed: _downloadAndInstallUpdate,
-                      child: const Text('Update Now'),
+                      child: Text(_isApkCached ? 'Install Update' : 'Download Update'),
                     ),
                   ),
                 ],
               ),
           ] 
-          // Default state or "Checking" State
           else ...[
             Row(
               children: [
