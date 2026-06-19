@@ -666,7 +666,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Secure Academic Middleware System',
+                            'An app crafted by Team Paradox, IET DDU GU',
                             style: TextStyle(fontSize: 11, color: EduDesignTokens.slate400.withOpacity(0.8)),
                           ),
                           const SizedBox(height: 2),
