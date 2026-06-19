@@ -110,7 +110,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final String releaseName = data['name'] ?? ''; 
         final String htmlUrl = data['html_url'] ?? ''; 
 
-        final RegExp versionRegExp = RegExp(r'\(v(.*?)\)');
+        final RegExp versionRegExp = RegExp(r'v([\d\.]+)');
         final match = versionRegExp.firstMatch(releaseName);
         final String latestVersion = match != null ? match.group(1)! : '0.0.0';
 
