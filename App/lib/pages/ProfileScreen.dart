@@ -441,7 +441,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: SafeArea(
           child: RefreshIndicator(
             color: Theme.of(context).primaryColor,
-            onRefresh: () => _syncLiveProfile(silent: false),
+            onRefresh: () async { 
+              _syncLiveProfile(silent: false);
+              _fetchAvailableSchedules();
+              _manualCheckForUpdates();
+            },
             child: SingleChildScrollView(
               physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
               child: Padding(

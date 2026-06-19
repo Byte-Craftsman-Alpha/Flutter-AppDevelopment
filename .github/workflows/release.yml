@@ -2,10 +2,9 @@ name: Build & Publish APK Release
 
 on:
   push:
-    branches:
-      - main # 💡 CHANGED: Triggers automatically on every push to your main branch. Change to 'master' if needed.
+    tags:
+      - 'v*' # Triggers on v1.0.0, v2.1.3, etc.
 
-# Explicit permission needed to upload files to GitHub Releases
 permissions:
   contents: write
 
@@ -33,47 +32,39 @@ jobs:
         working-directory: App
         run: flutter pub get
 
-      # 💡 NEW: Decode the Base64 Keystore string back into a physical .jks file
-      # We place it directly in App/android/app/ so build.gradle.kts can find it
       - name: Decode Keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > App/android/app/upload-keystore.jks
 
-      # 💡 UPDATED: Pass the GitHub Secrets securely as environment variables
+      # 💡 NEW: Extract the version from your Git Tag instead of pubspec.yaml
+      - name: Extract Version from Tag
+        id: extract_version
+        run: |
+          # ${GITHUB_REF_NAME#v} removes the 'v' from 'v1.0.5', leaving '1.0.5'
+          CLEAN_VERSION=${GITHUB_REF_NAME#v}
+          echo "APP_VERSION=$CLEAN_VERSION" >> $GITHUB_OUTPUT
+
+      # 💡 UPDATED: Pass the dynamic version and automated run number to Flutter
       - name: Build APK
         working-directory: App
         env:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-        run: flutter build apk --release --no-tree-shake-icons
-
-      # 💡 NEW: Extract the version from your Flutter pubspec.yaml
-      - name: Extract App Version
-        id: extract_version
         run: |
-          # Look inside the 'App' directory for pubspec.yaml
-          # Find the line starting with 'version: ' and strip the prefix
-          VERSION=$(grep '^version: ' App/pubspec.yaml | sed 's/version: //')
-          # Save it as an output variable for the next step
-          echo "APP_VERSION=$VERSION" >> $GITHUB_OUTPUT
+          flutter build apk --release --no-tree-shake-icons \
+          --build-name=${{ steps.extract_version.outputs.APP_VERSION }} \
+          --build-number=${{ github.run_number }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          # Automatically generates a unique tag/name based on the workflow run number
-          tag_name: build-${{ github.run_number }}
-          
-          # 💡 UPDATED: Inject the version into the release name
-          name: Auto-Release Build ${{ github.run_number }} (v${{ steps.extract_version.outputs.APP_VERSION }})
-          
-          # 💡 NEW: Inject the version into the release body (this shows up in the JSON 'body' field)
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
           body: |
             🚀 **Automatic App Release**
             - **App Version:** `${{ steps.extract_version.outputs.APP_VERSION }}`
-            - **GitHub Build Number:** `${{ github.run_number }}`
-          
-          # Looks inside the 'App' folder for the final output
+            - **Build Number:** `${{ github.run_number }}`
           files: App/build/app/outputs/flutter-apk/app-release.apk
           draft: false
           prerelease: false
