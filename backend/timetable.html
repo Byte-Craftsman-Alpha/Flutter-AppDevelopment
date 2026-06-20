@@ -5,77 +5,80 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Timetable Editor</title>
-  <script src="https://cdn.jsdelivr.net/npm/@iconify/icons-solar@1.2.3/adhesive-plaster-2-linear.min.js"></script>
+  <script src="https://code.iconify.design/iconify-icon/1.0.8/iconify-icon.min.js"></script>
   <style>
-    *,
-    *::before,
-    *::after {
+    /* ─── Minimalist Reset & Variables ─── */
+    *, *::before, *::after {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
       user-select: none;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
     }
 
     :root {
-      --navy: #1e3a5f;
-      --navy-mid: #2d5488;
-      --navy-light: #e8f0fb;
-      --amber: #f59e0b;
-      --amber-light: #fef3c7;
-      --amber-border: #f59e0b;
-      --slate: #64748b;
-      --slate-light: #f1f5f9;
-      --border: #cbd5e1;
-      --white: #ffffff;
-      --bg: #f0f4f8;
-      --text: #1e293b;
-      --text-muted: #94a3b8;
-      --red: #ef4444;
-      --green: #10b981;
-      --radius: 6px;
-      --shadow: 0 1px 3px rgba(0, 0, 0, .1), 0 1px 2px rgba(0, 0, 0, .06);
-      --shadow-md: 0 4px 16px rgba(0, 0, 0, .12);
+      --bg: #f9fafb;
+      --surface: #ffffff;
+      --border: #e5e7eb;
+      --border-hover: #d1d5db;
+      --text-main: #111827;
+      --text-muted: #6b7280;
+      --accent: #0f172a;
+      --accent-light: #f1f5f9;
+      --primary: #3b82f6;
+      --primary-light: #eff6ff;
+      --danger: #ef4444;
+      --danger-light: #fef2f2;
+      --success: #10b981;
+      --success-light: #ecfdf5;
+      --warning: #f59e0b;
+      --warning-light: #fffbeb;
+      --radius: 10px;
+      --radius-sm: 8px;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+      --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
       background: var(--bg);
-      color: var(--text);
+      color: var(--text-main);
       min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
     }
 
     /* ─── Header ─── */
     .app-header {
-      background: var(--navy);
-      color: var(--white);
-      padding: 0 24px;
+      background: var(--surface);
+      padding: 0 32px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      height: 56px;
+      height: 64px;
       position: sticky;
       top: 0;
       z-index: 100;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, .2);
+      border-bottom: 1px solid var(--border);
     }
 
     .app-header h1 {
       font-size: 18px;
       font-weight: 600;
-      letter-spacing: .3px;
       display: flex;
       align-items: center;
       gap: 10px;
+      color: var(--accent);
     }
 
-    .app-header h1 span.icon {
-      font-size: 20px;
+    .app-header h1 iconify-icon {
+      font-size: 24px;
+      color: var(--primary);
     }
 
     .header-actions {
       display: flex;
-      gap: 10px;
+      gap: 12px;
       align-items: center;
     }
 
@@ -83,247 +86,285 @@
     .btn {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 6px;
-      padding: 7px 14px;
-      border-radius: var(--radius);
-      font-size: 14px;
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
       font-weight: 500;
       cursor: pointer;
       border: 1px solid transparent;
-      transition: all .15s;
+      transition: var(--transition);
       line-height: 1;
+      background: var(--surface);
     }
+
+    .btn iconify-icon { font-size: 16px; }
 
     .btn-primary {
-      background: var(--amber);
-      color: #1a1a1a;
-      border-color: var(--amber);
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
     }
-
     .btn-primary:hover {
-      background: #e08d00;
-    }
-
-    .btn-ghost {
-      background: rgba(255, 255, 255, .12);
-      color: var(--white);
-      border-color: rgba(255, 255, 255, .2);
-    }
-
-    .btn-ghost:hover {
-      background: rgba(255, 255, 255, .22);
-    }
-
-    .btn-sm {
-      padding: 5px 10px;
-      font-size: 12px;
-    }
-
-    .btn-danger {
-      background: #fee2e2;
-      color: var(--red);
-      border-color: #fca5a5;
-    }
-
-    .btn-danger:hover {
-      background: #fecaca;
+      background: #1e293b;
+      transform: translateY(-1px);
     }
 
     .btn-outline {
-      background: var(--white);
-      color: var(--navy);
+      background: var(--surface);
+      color: var(--text-main);
       border-color: var(--border);
+      box-shadow: var(--shadow-sm);
     }
-
     .btn-outline:hover {
-      background: var(--slate-light);
+      background: var(--bg);
+      border-color: var(--border-hover);
     }
 
-    .btn-success {
-      background: #d1fae5;
-      color: #065f46;
-      border-color: #6ee7b7;
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-muted);
+    }
+    .btn-ghost:hover {
+      background: var(--accent-light);
+      color: var(--accent);
     }
 
-    .btn-success:hover {
-      background: #a7f3d0;
-    }
+    .btn-danger-ghost { color: var(--danger); }
+    .btn-danger-ghost:hover { background: var(--danger-light); }
+
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
 
     /* ─── Toolbar ─── */
     .toolbar {
-      background: var(--white);
+      background: var(--surface);
       border-bottom: 1px solid var(--border);
-      padding: 10px 24px;
+      padding: 12px 32px;
       display: flex;
-      gap: 10px;
+      gap: 16px;
       align-items: center;
       flex-wrap: wrap;
     }
 
+    .mode-indicator { display: flex; align-items: center; gap: 8px; }
+
     .toolbar-label {
-      font-size: 12px;
-      color: var(--slate);
-      font-weight: 500;
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: .5px;
-      margin-right: 4px;
+      letter-spacing: 0.5px;
     }
 
     .mode-badge {
       display: inline-flex;
       align-items: center;
-      gap: 5px;
-      padding: 4px 10px;
+      gap: 6px;
+      padding: 6px 12px;
       border-radius: 20px;
       font-size: 12px;
       font-weight: 500;
-      border: 1px solid;
+      transition: var(--transition);
     }
 
-    .mode-badge.edit {
-      background: var(--navy-light);
-      color: var(--navy);
-      border-color: #bcd4f5;
-    }
+    .mode-badge.edit { background: var(--accent-light); color: var(--accent); }
+    .mode-badge.merge { background: var(--warning-light); color: #b45309; }
+    .mode-badge.copy { background: var(--success-light); color: #047857; }
 
-    .mode-badge.merge {
-      background: var(--amber-light);
-      color: #92400e;
-      border-color: #fcd34d;
-    }
-
-    .mode-badge .dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: currentColor;
-    }
-
-    /* ─── Grid wrapper ─── */
+    /* ─── Grid Wrapper ─── */
     .grid-outer {
-      width: fit-content;
-      padding: 20px 24px;
+      padding: 32px;
       overflow-x: auto;
+      max-width: 100%;
     }
 
-    .grid-wrap {
-      min-width: max-content;
+    .schedule-header {
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
     }
 
-    /* ─── The table ─── */
+    .schedule-title-input {
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--text-main);
+      border: 1px solid transparent;
+      background: transparent;
+      padding: 6px 10px;
+      border-radius: var(--radius-sm);
+      outline: none;
+      transition: var(--transition);
+      width: 320px;
+    }
+    .schedule-title-input:hover, .schedule-title-input:focus {
+      border-color: var(--border);
+      background: var(--surface);
+    }
+
+    .grid-wrap { width: max-content; }
+
+    /* ─── The Table (Spaced & Rounded) ─── */
     table.tt {
-      border-collapse: collapse;
+      border-collapse: separate;
+      border-spacing: 8px; 
       table-layout: fixed;
-      width: auto;
     }
 
-    table.tt th,
-    table.tt td {
+    table.tt th, table.tt td {
+      border-radius: var(--radius); 
       border: 1px solid var(--border);
+      background: var(--surface);
     }
 
-    /* Day header column */
+    .th-corner {
+      background: transparent !important;
+      border-color: transparent !important;
+      width: 100px;
+      min-width: 100px;
+    }
+
     .th-day {
-      background: var(--navy);
-      color: var(--white);
+      background: transparent !important;
+      border: 1px solid transparent !important;
+      color: var(--text-muted);
       font-size: 12px;
       font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: .5px;
-      text-align: center;
-      padding: 10px 6px;
-      width: 90px;
-      min-width: 90px;
-      position: sticky;
-      left: 0;
-      z-index: 10;
+      letter-spacing: 0.5px;
+      text-align: right;
+      padding: 16px 12px;
+      width: 100px;
+      min-width: 100px;
+      vertical-align: center;
+      text-align: left;
     }
 
-    /* Corner cell */
-    .th-corner {
-      background: var(--navy);
-      position: sticky;
-      left: 0;
-      z-index: 12;
-      width: 90px;
-      min-width: 90px;
-    }
-
-    /* Time header row */
     .th-time {
-      background: var(--slate-light);
-      color: var(--slate);
-      font-size: 12px;
-      font-weight: 600;
-      text-align: center;
-      padding: 8px 4px;
-      width: 140px;
-      min-width: 140px;
-      letter-spacing: .3px;
-      position: sticky;
-      z-index: 9;
+      background: var(--surface);
+      color: var(--text-muted);
+      width: 160px;
+      min-width: 160px;
+      box-shadow: var(--shadow-sm);
+      position: relative;
+      padding: 8px;
     }
 
-    /* Regular cell */
+    /* Column Header Content */
+    .col-header-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .time-label {
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.3px;
+    }
+
+    /* Column Hover Actions */
+    .col-actions {
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transform: translateY(2px);
+      transition: var(--transition);
+    }
+
+    .th-time:hover .col-actions {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .col-action-btn {
+      width: 22px;
+      height: 22px;
+      border-radius: 4px;
+      border: 1px solid transparent;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-muted);
+      transition: var(--transition);
+    }
+
+    .col-action-btn:hover { background: var(--accent-light); color: var(--accent); border-color: var(--border-hover); }
+    .col-action-btn.del:hover { background: var(--danger-light); color: var(--danger); border-color: #fca5a5; }
+
+    /* ─── Cells & Colors ─── */
     td.cell {
-      width: 140px;
-      min-width: 140px;
-      height: 80px;
+      width: 160px;
+      min-width: 160px;
+      height: 100px;
       vertical-align: top;
       padding: 0;
       position: relative;
-      background: var(--white);
       cursor: pointer;
-      transition: background .1s;
+      transition: var(--transition);
+      box-shadow: var(--shadow-sm);
+      --cell-bg: var(--surface);
+      --cell-border: var(--border);
+      background: var(--cell-bg);
+      border-color: var(--cell-border);
     }
 
     td.cell:hover {
-      background: #f8fafc;
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
+      border-color: var(--border-hover);
     }
 
+    /* Color Presets */
+    td.cell.c-default { --cell-bg: #ffffff; --cell-border: #e5e7eb; }
+    td.cell.c-blue    { --cell-bg: #eff6ff; --cell-border: #bfdbfe; }
+    td.cell.c-emerald { --cell-bg: #ecfdf5; --cell-border: #a7f3d0; }
+    td.cell.c-amber   { --cell-bg: #fffbeb; --cell-border: #fde68a; }
+    td.cell.c-rose    { --cell-bg: #fff1f2; --cell-border: #fecdd3; }
+    td.cell.c-purple  { --cell-bg: #faf5ff; --cell-border: #e9d5ff; }
+
+    /* Cell States */
     td.cell.selected-for-merge {
-      background: var(--amber-light) !important;
-      outline: 2px solid var(--amber);
-      outline-offset: -2px;
+      box-shadow: inset 0 0 0 2px var(--warning), 0 4px 12px rgba(245, 158, 11, 0.2);
+      border-color: var(--warning);
     }
-
-    /* Merged cell styling */
-    td.cell.merged {
-      background: linear-gradient(135deg, #fffbeb 0%, #fef9ee 100%);
-      border-left: 3px solid var(--amber);
+    td.cell.copy-source {
+      box-shadow: inset 0 0 0 2px var(--success), 0 4px 12px rgba(16, 185, 129, 0.2);
+      border-color: var(--success);
     }
+    td.cell.copy-target { box-shadow: inset 0 0 0 2px #34d399; }
 
-    td.cell.merged:hover {
-      background: linear-gradient(135deg, #fef3c7 0%, #fef9ee 100%);
-    }
-
-    /* Cell inner */
+    /* Cell Content Inner */
     .cell-inner {
-      padding: 6px 8px;
+      padding: 12px;
       height: 100%;
       display: flex;
       flex-direction: column;
-      gap: 2px;
+      gap: 6px;
       pointer-events: none;
     }
 
     .cell-room {
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
-      color: var(--navy);
-      background: var(--navy-light);
-      border-radius: 3px;
-      padding: 1px 5px;
+      color: var(--accent);
+      background: rgba(0,0,0,0.06);
+      border-radius: 4px;
+      padding: 3px 8px;
       display: inline-block;
-      letter-spacing: .3px;
       width: fit-content;
+      letter-spacing: 0.3px;
     }
 
     .cell-subject {
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 600;
-      color: var(--text);
-      line-height: 1.3;
+      color: var(--text-main);
+      line-height: 1.4;
       flex: 1;
       overflow: hidden;
       display: -webkit-box;
@@ -332,442 +373,295 @@
     }
 
     .cell-teacher {
-      font-size: 12px;
-      color: var(--slate);
+      font-size: 11px;
+      color: var(--text-muted);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-weight: 500;
     }
 
     .cell-empty-hint {
-      color: var(--text-muted);
-      font-size: 12px;
-      text-align: center;
+      color: var(--border-hover);
+      font-size: 24px;
       margin: auto;
+      transition: var(--transition);
+      opacity: 0;
     }
 
-    /* Merge/unmerge badges */
+    td.cell:hover .cell-empty-hint {
+      opacity: 1;
+      color: var(--text-muted);
+    }
+
+    /* Hover Actions */
     .cell-actions {
       position: absolute;
-      top: 3px;
-      right: 4px;
-      display: none;
-      gap: 3px;
+      top: 8px;
+      right: 8px;
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transform: translateY(-4px);
+      transition: var(--transition);
       z-index: 2;
     }
 
     td.cell:hover .cell-actions {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .action-icon-btn {
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      box-shadow: var(--shadow-sm);
       display: flex;
-    }
-
-    .cell-action-btn {
-      font-size: 12px;
-      padding: 2px 5px;
-      border-radius: 3px;
+      align-items: center;
+      justify-content: center;
       cursor: pointer;
-      border: 1px solid;
-      font-weight: 600;
-      pointer-events: all;
-      line-height: 1.4;
-      transition: all .1s;
+      color: var(--text-muted);
+      pointer-events: auto;
+      transition: var(--transition);
     }
 
-    .ca-merge {
-      background: #fef3c7;
-      color: #92400e;
-      border-color: #fcd34d;
-    }
+    .action-icon-btn:hover { background: var(--accent-light); color: var(--accent); border-color: var(--border-hover); }
+    .action-icon-btn.merge-btn:hover { color: var(--warning); background: var(--warning-light); border-color: #fcd34d; }
+    .action-icon-btn.copy-btn:hover { color: var(--success); background: var(--success-light); border-color: #6ee7b7;}
+    .action-icon-btn.unmerge-btn { color: var(--danger); }
+    .action-icon-btn.unmerge-btn:hover { background: var(--danger-light); border-color: #fca5a5; }
 
-    .ca-merge:hover {
-      background: #fde68a;
-    }
-
-    .ca-unmerge {
-      background: #fee2e2;
-      color: var(--red);
-      border-color: #fca5a5;
-    }
-
-    .ca-unmerge:hover {
-      background: #fecaca;
-    }
-
-    .ca-edit {
-      background: var(--navy-light);
-      color: var(--navy);
-      border-color: #bcd4f5;
-    }
-
-    .ca-edit:hover {
-      background: #d1e4fa;
-    }
-
-    /* ─── Modal ─── */
+    /* ─── Modals ─── */
     .modal-overlay {
       display: none;
       position: fixed;
       inset: 0;
-      background: rgba(15, 23, 42, .5);
-      backdrop-filter: blur(2px);
+      background: rgba(15, 23, 42, 0.4);
+      backdrop-filter: blur(4px);
       z-index: 1000;
       align-items: center;
       justify-content: center;
+      opacity: 0;
+      transition: opacity 0.2s;
     }
-
-    .modal-overlay.open {
-      display: flex;
-    }
+    .modal-overlay.open { display: flex; opacity: 1; }
 
     .modal {
-      background: var(--white);
-      border-radius: 10px;
-      box-shadow: var(--shadow-md);
+      background: var(--surface);
+      border-radius: 16px;
+      box-shadow: var(--shadow-lg);
       width: 420px;
-      max-width: 96vw;
+      max-width: 90vw;
+      transform: scale(0.95);
+      transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       overflow: hidden;
-      animation: slideUp .18s ease;
     }
-
-    @keyframes slideUp {
-      from {
-        transform: translateY(16px);
-        opacity: 0;
-      }
-
-      to {
-        transform: translateY(0);
-        opacity: 1;
-      }
-    }
+    .modal-overlay.open .modal { transform: scale(1); }
 
     .modal-header {
-      background: var(--navy);
-      color: var(--white);
-      padding: 14px 18px;
+      padding: 24px 28px 16px;
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: flex-start;
     }
-
-    .modal-header h2 {
-      font-size: 16px;
-      font-weight: 600;
-    }
-
-    .modal-header .modal-meta {
-      font-size: 12px;
-      color: rgba(255, 255, 255, .6);
-      margin-top: 2px;
-    }
+    .modal-header h2 { font-size: 18px; font-weight: 600; color: var(--accent); }
+    .modal-meta { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
 
     .modal-close {
       background: none;
       border: none;
-      color: rgba(255, 255, 255, .7);
-      font-size: 20px;
+      color: var(--text-muted);
       cursor: pointer;
-      line-height: 1;
-      padding: 0 4px;
+      padding: 4px;
+      border-radius: 6px;
+      display: flex;
+      transition: var(--transition);
     }
-
-    .modal-close:hover {
-      color: var(--white);
-    }
+    .modal-close:hover { background: var(--accent-light); color: var(--accent); }
 
     .modal-body {
-      padding: 18px;
+      padding: 0 28px 28px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 18px;
     }
 
-    .form-group {
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-    }
-
-    .form-group label {
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--slate);
-      text-transform: uppercase;
-      letter-spacing: .4px;
-    }
-
-    .form-group input,
-    .form-group textarea {
+    .form-group { display: flex; flex-direction: column; gap: 8px; }
+    .form-group label { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;}
+    
+    .form-input {
       border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 9px 12px;
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
       font-size: 14px;
-      color: var(--text);
-      font-family: inherit;
-      transition: border-color .15s;
+      color: var(--text-main);
+      background: #fdfdfd;
+      transition: var(--transition);
       outline: none;
     }
-
-    .form-group input:focus,
-    .form-group textarea:focus {
-      border-color: var(--navy-mid);
-      box-shadow: 0 0 0 3px rgba(45, 84, 136, .12);
+    .form-input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-light);
+      background: var(--surface);
     }
+
+    /* Color Picker */
+    .color-picker { display: flex; gap: 10px; margin-top: 4px; }
+    .color-swatch {
+      width: 28px; height: 28px; border-radius: 50%;
+      cursor: pointer; border: 2px solid transparent;
+      transition: var(--transition); position: relative;
+    }
+    .color-swatch:hover { transform: scale(1.1); }
+    .color-swatch.active { border-color: var(--text-main); transform: scale(1.1); }
+    .color-swatch.active::after {
+      content: ''; position: absolute; inset: -4px;
+      border: 1px solid var(--border); border-radius: 50%;
+    }
+
+    .swatch-default { background: #ffffff; border: 1px solid #e5e7eb; }
+    .swatch-blue    { background: #eff6ff; border: 1px solid #bfdbfe; }
+    .swatch-emerald { background: #ecfdf5; border: 1px solid #a7f3d0; }
+    .swatch-amber   { background: #fffbeb; border: 1px solid #fde68a; }
+    .swatch-rose    { background: #fff1f2; border: 1px solid #fecdd3; }
+    .swatch-purple  { background: #faf5ff; border: 1px solid #e9d5ff; }
 
     .modal-footer {
-      padding: 12px 18px;
+      padding: 16px 28px; background: #f8fafc;
       border-top: 1px solid var(--border);
-      display: flex;
-      gap: 8px;
-      justify-content: flex-end;
+      display: flex; justify-content: flex-end; gap: 10px;
     }
 
-    /* ─── Export modal ─── */
-    .export-area {
-      font-size: 12px;
-      font-family: 'Courier New', monospace;
-      background: #0f172a;
-      color: #86efac;
-      border: 1px solid #334155;
-      border-radius: var(--radius);
-      padding: 14px;
-      max-height: 400px;
-      overflow: auto;
-      white-space: pre;
-      line-height: 1.5;
-    }
-
-    /* ─── Add column ─── */
+    /* ─── Add Column End Button ─── */
     .add-col-th {
-      background: var(--slate-light);
+      background: transparent;
       text-align: center;
-      padding: 8px;
+      padding: 0;
       cursor: pointer;
-      width: 50px;
-      min-width: 50px;
+      width: 48px;
+      min-width: 48px;
+      color: var(--text-muted);
+      transition: var(--transition);
     }
-
-    .add-col-th:hover {
-      background: #e2e8f0;
+    .add-col-th iconify-icon {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      padding: 6px;
+      box-shadow: var(--shadow-sm);
+      transition: var(--transition);
+    }
+    .add-col-th:hover iconify-icon {
+      background: var(--primary-light); color: var(--primary);
+      border-color: #bfdbfe; transform: scale(1.05);
     }
 
     /* ─── Toast ─── */
     .toast {
-      position: fixed;
-      bottom: 24px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: #1e293b;
-      color: #f8fafc;
-      padding: 10px 18px;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 500;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity .2s;
-      z-index: 2000;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      position: fixed; bottom: 32px; left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--accent); color: #fff;
+      padding: 12px 24px; border-radius: 30px;
+      font-size: 13px; font-weight: 500;
+      opacity: 0; pointer-events: none;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: var(--shadow-md); display: flex;
+      align-items: center; gap: 8px; z-index: 2000;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ─── Banners ─── */
+    .action-banner {
+      display: none; padding: 12px 32px;
+      font-size: 13px; font-weight: 500;
+      align-items: center; gap: 12px;
+      animation: slideDown 0.2s ease-out;
+    }
+    @keyframes slideDown {
+      from { transform: translateY(-10px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .action-banner.visible { display: flex; }
+    #mergeBanner { background: var(--warning-light); border-bottom: 1px solid #fcd34d; color: #b45309; }
+    #copyBanner { background: var(--success-light); border-bottom: 1px solid #a7f3d0; color: #047857; }
+
+    /* Print Styles */
+    @media print {
+      body { background: #fff; padding: 0; margin: 0; }
+      .app-header button, .toolbar, .action-banner, .cell-actions, .col-actions, .add-col-th, .modal-overlay, .toast { display: none !important; }
+      .app-header { position: static; border-bottom: 2px solid #000; margin-bottom: 20px; padding: 0 0 10px 0; }
+      .grid-outer { padding: 0; overflow: visible; }
+      table.tt { border-spacing: 4px; }
+      table.tt th, table.tt td { border: 1px solid #cbd5e1 !important; box-shadow: none !important; }
+      td.cell { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      .schedule-title-input { border: none; padding: 0; }
     }
 
-    .toast.show {
-      opacity: 1;
-    }
-
-    /* Merge mode banner */
-    .merge-banner {
-      display: none;
-      background: var(--amber-light);
-      border-bottom: 1px solid #fcd34d;
-      padding: 8px 24px;
-      font-size: 14px;
-      color: #92400e;
-      font-weight: 500;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .merge-banner.visible {
-      display: flex;
-    }
-
-    .merge-banner strong {
-      color: #78350f;
-    }
-
-    /* Import section */
-    .import-section {
-      padding: 14px 18px;
-      border-top: 1px solid var(--border);
-    }
-
-    .import-section label {
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--slate);
-      text-transform: uppercase;
-      letter-spacing: .4px;
-      display: block;
-      margin-bottom: 6px;
-    }
-
-    .import-section textarea {
-      width: 100%;
-      min-height: 100px;
-      font-size: 12px;
-      font-family: monospace;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 8px;
-      resize: vertical;
-    }
-
-    /* ─── Copy mode ─── */
-    .copy-banner {
-      display: none;
-      background: #f0fdf4;
-      border-bottom: 1px solid #86efac;
-      padding: 8px 24px;
-      font-size: 14px;
-      color: #166534;
-      font-weight: 500;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-
-    .copy-banner.visible {
-      display: flex;
-    }
-
-    .copy-banner strong {
-      color: #14532d;
-    }
-
-    .copy-preview {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-wrap: wrap;
-      background: #dcfce7;
-      border: 1px solid #86efac;
-      border-radius: 6px;
-      padding: 4px 10px;
-      font-size: 12px;
-    }
-
-    .copy-preview-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 3px;
-      font-size: 12px;
-    }
-
-    .copy-preview-chip .lbl {
-      color: #15803d;
-      font-weight: 700;
-      text-transform: uppercase;
-      font-size: 12px;
-    }
-
-    .copy-preview-chip .val {
-      color: #14532d;
-    }
-
-    .copy-count-badge {
-      background: #16a34a;
-      color: #fff;
-      border-radius: 20px;
-      padding: 2px 9px;
-      font-size: 12px;
-      font-weight: 700;
-      min-width: 22px;
-      text-align: center;
-    }
-
-    td.cell.copy-source {
-      background: #dcfce7 !important;
-      outline: 2px solid #16a34a;
-      outline-offset: -2px;
-    }
-
-    td.cell.copy-target {
-      background: #bbf7d0 !important;
-      outline: 2px solid #22c55e;
-      outline-offset: -2px;
-    }
-
-    td.cell.copy-target:hover {
-      background: #86efac !important;
-    }
-
-    .mode-badge.copy {
-      background: #dcfce7;
-      color: #166534;
-      border-color: #86efac;
-    }
-
-    .ca-copy {
-      background: #dcfce7;
-      color: #166534;
-      border-color: #86efac;
-    }
-
-    .ca-copy:hover {
-      background: #bbf7d0;
-    }
   </style>
 </head>
 
 <body>
 
-  <!-- App Header -->
   <header class="app-header">
-    <h1><span class="icon">📅</span> Timetable Editor</h1>
+    <h1>
+      <iconify-icon icon="solar:calendar-minimalistic-line-duotone"></iconify-icon>
+      Timetable Editor
+    </h1>
     <div class="header-actions">
-      <button class="btn btn-ghost btn-sm" onclick="openImport()">⬆ Import JSON</button>
-      <button class="btn btn-primary btn-sm" onclick="openExport()">⬇ Export JSON</button>
+      <button class="btn btn-ghost" onclick="window.print()">
+        <iconify-icon icon="solar:printer-outline"></iconify-icon> Print
+      </button>
+      <button class="btn btn-ghost" onclick="openImport()">
+        <iconify-icon icon="solar:upload-minimalistic-outline"></iconify-icon> Import
+      </button>
+      <button class="btn btn-primary" onclick="openExport()">
+        <iconify-icon icon="solar:download-minimalistic-outline"></iconify-icon> Export
+      </button>
     </div>
   </header>
 
-  <!-- Merge Mode Banner -->
-  <div class="merge-banner" id="mergeBanner">
-    <span>🔀</span>
-    <span>Select an <strong>adjacent horizontal cell</strong> to merge with <strong
-        id="mergeBannerLabel"></strong></span>
+  <div class="action-banner" id="mergeBanner">
+    <iconify-icon icon="solar:diagram-down-outline" style="font-size: 18px;"></iconify-icon>
+    <span>Select an adjacent horizontal cell to merge with <strong id="mergeBannerLabel"></strong></span>
     <button class="btn btn-sm btn-outline" onclick="cancelMerge()" style="margin-left:auto">Cancel</button>
   </div>
 
-  <!-- Copy Mode Banner -->
-  <div class="copy-banner" id="copyBanner">
-    <span>📋</span>
-    <span>Click any cells to paste into — then hit <strong>Apply</strong></span>
-    <div class="copy-preview" id="copyPreview"></div>
-    <span style="display:flex;align-items:center;gap:6px;font-size:12px;">
-      <span id="copyCountBadge" class="copy-count-badge">0</span> selected
+  <div class="action-banner" id="copyBanner">
+    <iconify-icon icon="solar:copy-outline" style="font-size: 18px;"></iconify-icon>
+    <span>Click cells to paste data into.</span>
+    <span style="display:flex;align-items:center;gap:6px;font-size:12px; background: rgba(0,0,0,0.05); padding: 2px 8px; border-radius: 12px;">
+      <strong id="copyCountBadge">0</strong> selected
     </span>
     <div style="margin-left:auto;display:flex;gap:8px;">
       <button class="btn btn-sm btn-outline" onclick="cancelCopy()">Cancel</button>
-      <button class="btn btn-sm" style="background:#16a34a;color:#fff;border-color:#16a34a;" onclick="applyCopy()">✓
-        Apply to Selected</button>
+      <button class="btn btn-sm" style="background:#10b981;color:#fff;border-color:#10b981;" onclick="applyCopy()">
+        <iconify-icon icon="solar:check-circle-outline"></iconify-icon> Apply
+      </button>
     </div>
   </div>
 
-  <!-- Toolbar -->
   <div class="toolbar">
-    <span class="toolbar-label">Mode</span>
-    <div class="mode-badge edit" id="modeBadge"><span class="dot"></span> Edit</div>
+    <div class="mode-indicator">
+      <span class="toolbar-label">Mode:</span>
+      <div class="mode-badge edit" id="modeBadge">
+        <iconify-icon icon="solar:pen-new-square-outline"></iconify-icon> Edit
+      </div>
+    </div>
     <div style="flex:1"></div>
-    <button class="btn btn-outline btn-sm" onclick="addTimeColumn()">＋ Add Time Slot</button>
-    <button class="btn btn-danger btn-sm" onclick="removeLastTimeColumn()">− Remove Last Slot</button>
+    <button class="btn btn-outline btn-sm" onclick="addTimeColumn()">
+      <iconify-icon icon="solar:add-circle-outline"></iconify-icon> Append Slot
+    </button>
   </div>
 
-  <!-- Grid -->
   <div class="grid-outer">
-    <div class="form-group">
-      <label>Schedule Name</label>
-      <input type="text" id="ScheduleName" placeholder="e.g. Computer Science">
+    <div class="schedule-header">
+      <input type="text" class="schedule-title-input" id="ScheduleName" placeholder="e.g. B.Tech CSE (Semester 4)">
     </div>
     <div class="grid-wrap">
       <table class="tt" id="timetable">
@@ -777,138 +671,137 @@
     </div>
   </div>
 
-  <!-- Edit Cell Modal -->
   <div class="modal-overlay" id="editModal">
     <div class="modal">
       <div class="modal-header">
         <div>
-          <h2>Edit Cell</h2>
+          <h2>Edit Slot</h2>
           <div class="modal-meta" id="editModalMeta"></div>
         </div>
-        <button class="modal-close" onclick="closeEditModal()">×</button>
+        <button class="modal-close" onclick="closeEditModal()">
+          <iconify-icon icon="solar:close-circle-outline" style="font-size: 22px;"></iconify-icon>
+        </button>
       </div>
       <div class="modal-body">
+        
         <div class="form-group">
-          <label>Room</label>
-          <input type="text" id="inputRoom" placeholder="e.g. IET-17" />
+          <label>Color</label>
+          <div class="color-picker" id="colorPicker">
+            <div class="color-swatch swatch-default active" data-color="default" title="Default"></div>
+            <div class="color-swatch swatch-blue" data-color="blue" title="Blue"></div>
+            <div class="color-swatch swatch-emerald" data-color="emerald" title="Emerald"></div>
+            <div class="color-swatch swatch-amber" data-color="amber" title="Amber"></div>
+            <div class="color-swatch swatch-rose" data-color="rose" title="Rose"></div>
+            <div class="color-swatch swatch-purple" data-color="purple" title="Purple"></div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Room / Location</label>
+          <input type="text" class="form-input" id="inputRoom" placeholder="e.g. Lab 304" />
         </div>
         <div class="form-group">
           <label>Subject</label>
-          <input type="text" id="inputSubject" placeholder="e.g. Software Engineering (Theory)" />
+          <input type="text" class="form-input" id="inputSubject" placeholder="e.g. Software Engineering" />
         </div>
         <div class="form-group">
           <label>Teacher</label>
-          <input type="text" id="inputTeacher" placeholder="e.g. Mrs. Akancha Agrawal" />
+          <input type="text" class="form-input" id="inputTeacher" placeholder="e.g. Prof. Smith" />
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-outline btn-sm" onclick="clearCell()">Clear</button>
+        <button class="btn btn-ghost btn-sm" onclick="clearCell()" style="margin-right:auto; color: var(--danger);">Clear</button>
         <button class="btn btn-outline btn-sm" onclick="closeEditModal()">Cancel</button>
-        <button class="btn btn-primary btn-sm" onclick="saveCell()">Save</button>
+        <button class="btn btn-primary btn-sm" onclick="saveCell()">Save Changes</button>
       </div>
     </div>
   </div>
 
-  <!-- Export Modal -->
   <div class="modal-overlay" id="exportModal">
-    <div class="modal" style="width:600px">
+    <div class="modal" style="width: 500px;">
       <div class="modal-header">
         <div>
-          <h2>Export Timetable Data</h2>
-          <div class="modal-meta">JSON format · ready to copy</div>
+          <h2>Export Schedule</h2>
+          <div class="modal-meta">Copy the JSON below to save your data</div>
         </div>
-        <button class="modal-close" onclick="closeExportModal()">×</button>
+        <button class="modal-close" onclick="closeExportModal()">
+          <iconify-icon icon="solar:close-circle-outline" style="font-size: 22px;"></iconify-icon>
+        </button>
       </div>
       <div class="modal-body">
-        <pre class="export-area" id="exportArea"></pre>
+        <textarea id="exportArea" class="form-input" style="height: 200px; font-family: monospace; font-size: 12px; resize: none;" readonly></textarea>
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline btn-sm" onclick="closeExportModal()">Close</button>
-        <button class="btn btn-success btn-sm" onclick="copyExport()">📋 Copy to Clipboard</button>
+        <button class="btn btn-primary btn-sm" onclick="copyExport()">
+          <iconify-icon icon="solar:copy-outline"></iconify-icon> Copy JSON
+        </button>
       </div>
     </div>
   </div>
 
-  <!-- Import Modal -->
   <div class="modal-overlay" id="importModal">
-    <div class="modal" style="width:560px">
+    <div class="modal" style="width: 500px;">
       <div class="modal-header">
         <div>
-          <h2>Import Timetable JSON</h2>
-          <div class="modal-meta">Paste exported JSON to restore</div>
+          <h2>Import Schedule</h2>
+          <div class="modal-meta">Paste your previously exported JSON</div>
         </div>
-        <button class="modal-close" onclick="closeImportModal()">×</button>
+        <button class="modal-close" onclick="closeImportModal()">
+          <iconify-icon icon="solar:close-circle-outline" style="font-size: 22px;"></iconify-icon>
+        </button>
       </div>
       <div class="modal-body">
-        <div class="form-group">
-          <label>Paste JSON</label>
-          <textarea id="importArea" style="min-height:200px; font-family:monospace; font-size:12px; resize:vertical;"
-            placeholder='[{"day":"monday","room":"IET-17","time":"10:00 - 11:00",...}]'></textarea>
-        </div>
+        <textarea id="importArea" class="form-input" style="height: 200px; font-family: monospace; font-size: 12px; resize: none;" placeholder='[{"day":"monday","room":"Lab 304","time":"09:00 - 10:00",...}]'></textarea>
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline btn-sm" onclick="closeImportModal()">Cancel</button>
-        <button class="btn btn-primary btn-sm" onclick="doImport()">Import</button>
+        <button class="btn btn-primary btn-sm" onclick="doImport()">Import Data</button>
       </div>
     </div>
   </div>
 
-  <!-- Toast -->
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast">
+    <iconify-icon icon="solar:info-circle-line-duotone" id="toastIcon"></iconify-icon>
+    <span id="toastMsg"></span>
+  </div>
 
   <script>
     // ─────────────────────────────────────────────
     // STATE
     // ─────────────────────────────────────────────
     const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    let timeSlots = [9, 10, 11, 12, 13, 14, 15, 16];
 
-    // timeSlots: array of "HH:00" start times (hours)
-    let timeSlots = [9, 10, 11, 12, 13, 14, 15, 16].map(h => h);
+    let cellData = {}; 
+    let mergeMap = {};  
+    let hiddenCells = new Set(); 
 
-    // cells[day][colIndex] = { room, subject, teacher, mergedWith: null | colIndex (spans into) }
-    // mergedWith is used to track which columns a cell spans
-    // We store logical cell data keyed by [dayIndex][colIndex]
-    // For a merged cell spanning cols [c, c+1], the base is [d][c] with colspan=2,
-    // and [d][c+1] is "hidden" (merged slave)
-
-    let cellData = {}; // key: "dayIdx_colIdx" => { room, subject, teacher }
-    let mergeMap = {};  // key: "dayIdx_colIdx" => colspan (1 = normal, 2+ = merged)
-    let hiddenCells = new Set(); // "dayIdx_colIdx" cells that are slaves in a merge
-
-    // Merge mode state
+    // Modes
     let mergeMode = false;
     let mergeSrcDay = null;
     let mergeSrcCol = null;
 
-    // Copy mode state
     let copyMode = false;
-    let copySrcData = null; // { room, subject, teacher }
-    let copySrcKey = null;  // "dayIdx_colIdx" of the source cell
-    let copyTargets = new Set(); // set of "dayIdx_colIdx" keys
+    let copySrcData = null;
+    let copySrcKey = null;
+    let copyTargets = new Set();
 
-    // Current edit
     let editKey = null;
+    let selectedColor = 'default';
 
     // ─────────────────────────────────────────────
     // HELPERS
     // ─────────────────────────────────────────────
-    function key(d, c) { return `${d}_${c}`; }
-
-    function formatTime(h) {
-      const pad = n => String(n).padStart(2, '0');
-      return `${pad(h)}:00`;
-    }
-
-    function colLabel(c) {
-      const start = timeSlots[c];
-      const end = start + 1;
-      return `${formatTime(start)} – ${formatTime(end)}`;
-    }
-
-    function getCell(d, c) { return cellData[key(d, c)] || { room: '', subject: '', teacher: '' }; }
-    function setCell(d, c, val) { cellData[key(d, c)] = val; }
-    function getSpan(d, c) { return mergeMap[key(d, c)] || 1; }
-    function setSpan(d, c, s) { mergeMap[key(d, c)] = s; }
+    const key = (d, c) => `${d}_${c}`;
+    const formatTime = (h) => `${String(h).padStart(2, '0')}:00`;
+    const colLabel = (c) => `${formatTime(timeSlots[c])} – ${formatTime(timeSlots[c] + 1)}`;
+    
+    const getCell = (d, c) => cellData[key(d, c)] || { room: '', subject: '', teacher: '', color: 'default' };
+    const setCell = (d, c, val) => cellData[key(d, c)] = val;
+    const getSpan = (d, c) => mergeMap[key(d, c)] || 1;
+    const setSpan = (d, c, s) => mergeMap[key(d, c)] = s;
+    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     // ─────────────────────────────────────────────
     // RENDER
@@ -918,57 +811,65 @@
       const tbody = document.getElementById('tbodyRows');
 
       // Header row
-      let headerHTML = `<tr>
-    <th class="th-time th-corner"></th>`;
-      for (let c = 0; c < timeSlots.length; c++) {
-        headerHTML += `<th class="th-time">${colLabel(c)}</th>`;
-      }
-      headerHTML += `<th class="add-col-th" onclick="addTimeColumn()" title="Add time slot">＋</th></tr>`;
+      let headerHTML = `<tr><th class="th-corner"></th>`;
+      timeSlots.forEach((_, c) => {
+        headerHTML += `<th class="th-time">
+          <div class="col-header-inner">
+            <span class="time-label">${colLabel(c)}</span>
+            <div class="col-actions">
+              <button class="col-action-btn" onclick="insertColumn(${c})" title="Add column before"><iconify-icon icon="solar:round-alt-arrow-left-outline"></iconify-icon></button>
+              <button class="col-action-btn del" onclick="removeColumn(${c})" title="Delete column"><iconify-icon icon="solar:trash-bin-trash-outline"></iconify-icon></button>
+              <button class="col-action-btn" onclick="insertColumn(${c + 1})" title="Add column after"><iconify-icon icon="solar:round-alt-arrow-right-outline"></iconify-icon></button>
+            </div>
+          </div>
+        </th>`;
+      });
+      headerHTML += `<th class="add-col-th" onclick="addTimeColumn()" title="Append time slot"><iconify-icon icon="solar:add-circle-outline" style="font-size:22px;"></iconify-icon></th></tr>`;
       thead.innerHTML = headerHTML;
 
       // Body rows
       let bodyHTML = '';
-      for (let d = 0; d < DAYS.length; d++) {
-        bodyHTML += `<tr>
-      <th class="th-day">${DAYS[d]}</th>`;
-        for (let c = 0; c < timeSlots.length; c++) {
-          const k = key(d, c);
-          if (hiddenCells.has(k)) continue; // skip hidden merged slaves
+      DAYS.forEach((day, d) => {
+        bodyHTML += `<tr><th class="th-day">${day}</th>`;
+        timeSlots.forEach((_, c) => {
+          if (hiddenCells.has(key(d, c))) return;
+
           const span = getSpan(d, c);
           const cell = getCell(d, c);
           const isMerged = span > 1;
           const isSelected = mergeMode && mergeSrcDay === d && mergeSrcCol === c;
-          let classes = 'cell';
-          if (isMerged) classes += ' merged';
+          
+          let classes = `cell c-${cell.color || 'default'}`;
           if (isSelected) classes += ' selected-for-merge';
           if (copyMode && copySrcData && key(d, c) === copySrcKey) classes += ' copy-source';
           if (copyMode && copyTargets.has(key(d, c))) classes += ' copy-target';
-          bodyHTML += `<td class="${classes}" colspan="${span}" data-day="${d}" data-col="${c}" onclick="onCellClick(event, ${d}, ${c})">`;
-          bodyHTML += buildCellInner(cell, d, c, isMerged, span);
+
+          bodyHTML += `<td class="${classes}" colspan="${span}" onclick="onCellClick(event, ${d}, ${c})">`;
+          bodyHTML += buildCellInner(cell, d, c, isMerged);
           bodyHTML += `</td>`;
-        }
-        bodyHTML += `<td></td></tr>`;
-      }
+        });
+        bodyHTML += `</tr>`;
+      });
       tbody.innerHTML = bodyHTML;
     }
 
-    function buildCellInner(cell, d, c, isMerged, span) {
+    function buildCellInner(cell, d, c, isMerged) {
       const hasData = cell.room || cell.subject || cell.teacher;
       let html = `<div class="cell-actions">`;
-      // tile hover menus
+      
       if (!mergeMode && !copyMode) {
-        html += `<button class="cell-action-btn ca-edit" onclick="event.stopPropagation();openEdit(${d},${c})">Edit</button>`;
-        if (hasData) {
-          html += `<button class="cell-action-btn ca-copy" onclick="event.stopPropagation();startCopy(${d},${c})" title="Copy to multiple slots">Copy</button>`;
+        html += `<button class="action-icon-btn" onclick="event.stopPropagation();openEdit(${d},${c})" title="Edit"><iconify-icon icon="solar:pen-outline"></iconify-icon></button>`;
+        
+        if (hasData || (cell.color && cell.color !== 'default')) {
+          html += `<button class="action-icon-btn copy-btn" onclick="event.stopPropagation();startCopy(${d},${c})" title="Copy"><iconify-icon icon="solar:copy-outline"></iconify-icon></button>`;
         }
+        
         if (isMerged) {
-          html += `<button class="cell-action-btn ca-unmerge" onclick="event.stopPropagation();unmergeCell(${d},${c})">Unmerge</button>`;
+          html += `<button class="action-icon-btn unmerge-btn" onclick="event.stopPropagation();unmergeCell(${d},${c})" title="Unmerge"><iconify-icon icon="solar:diagram-up-outline"></iconify-icon></button>`;
         } else {
-          // Show merge button if there's a right neighbour
           const hasRight = (c + 1) < timeSlots.length && !hiddenCells.has(key(d, c + 1));
-          const hasLeft = c > 0 && !hiddenCells.has(key(d, c - 1)) && !hiddenCells.has(key(d, c));
-          if (hasRight || hasLeft) {
-            html += `<button class="cell-action-btn ca-merge" onclick="event.stopPropagation();startMerge(${d},${c})">Merge</button>`;
+          if (hasRight || c > 0 && !hiddenCells.has(key(d, c - 1))) {
+            html += `<button class="action-icon-btn merge-btn" onclick="event.stopPropagation();startMerge(${d},${c})" title="Merge Adjacent"><iconify-icon icon="solar:diagram-down-outline"></iconify-icon></button>`;
           }
         }
       }
@@ -976,56 +877,167 @@
 
       if (hasData) {
         html += `<div class="cell-inner">`;
-          // cell values
         if (cell.room) html += `<span class="cell-room">${esc(cell.room)}</span>`;
         if (cell.subject) html += `<span class="cell-subject">${esc(cell.subject)}</span>`;
-        if (cell.teacher) html += `<span class="cell-teacher">${esc(cell.teacher)}</span>`;
+        if (cell.teacher) html += `<span class="cell-teacher"><iconify-icon icon="solar:user-outline"></iconify-icon>${esc(cell.teacher)}</span>`;
         html += `</div>`;
       } else {
-        html += `<div class="cell-inner"><span class="cell-empty-hint">+</span></div>`;
+        html += `<div class="cell-inner"><span class="cell-empty-hint"><iconify-icon icon="solar:add-circle-outline"></iconify-icon></span></div>`;
       }
       return html;
     }
 
-    function esc(s) {
-      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // ─────────────────────────────────────────────
+    // ANYWHERE COLUMN MANAGEMENT (Core Logic)
+    // ─────────────────────────────────────────────
+    function insertColumn(atIndex) {
+      const maxCol = timeSlots.length - 1;
+
+      DAYS.forEach((_, d) => {
+        // Shift data right
+        for (let c = maxCol; c >= atIndex; c--) {
+          const oldKey = key(d, c);
+          const newKey = key(d, c + 1);
+
+          if (cellData[oldKey]) cellData[newKey] = cellData[oldKey];
+          else delete cellData[newKey];
+
+          if (mergeMap[oldKey]) mergeMap[newKey] = mergeMap[oldKey];
+          else delete mergeMap[newKey];
+
+          if (hiddenCells.has(oldKey)) {
+            hiddenCells.add(newKey);
+            hiddenCells.delete(oldKey);
+          } else {
+            hiddenCells.delete(newKey);
+          }
+        }
+
+        // Initialize empty slot
+        delete cellData[key(d, atIndex)];
+        delete mergeMap[key(d, atIndex)];
+        hiddenCells.delete(key(d, atIndex));
+
+        // Adjust overlaps
+        for (let c = 0; c < atIndex; c++) {
+          const span = getSpan(d, c);
+          if (c + span > atIndex) {
+            setSpan(d, c, span + 1);
+            hiddenCells.add(key(d, atIndex));
+            break;
+          }
+        }
+      });
+
+      timeSlots.push(timeSlots[timeSlots.length - 1] + 1);
+      renderGrid();
+      showToast('Column added');
+    }
+
+    function removeColumn(atIndex) {
+      if (timeSlots.length <= 1) return showToast('Cannot remove the last column', 'error');
+      const maxCol = timeSlots.length - 1;
+
+      DAYS.forEach((_, d) => {
+        const k = key(d, atIndex);
+
+        if (hiddenCells.has(k)) {
+          // Adjust parent span
+          for (let c = 0; c < atIndex; c++) {
+            const span = getSpan(d, c);
+            if (c + span > atIndex) {
+              setSpan(d, c, span - 1);
+              break;
+            }
+          }
+        } else {
+          // It's a base. Pass data forward if merged
+          const span = getSpan(d, atIndex);
+          if (span > 1) {
+            const nextKey = key(d, atIndex + 1);
+            cellData[nextKey] = cellData[k];
+            setSpan(d, atIndex + 1, span - 1);
+            hiddenCells.delete(nextKey);
+          }
+        }
+
+        // Shift data left
+        for (let c = atIndex + 1; c <= maxCol; c++) {
+          const oldKey = key(d, c);
+          const newKey = key(d, c - 1);
+
+          if (cellData[oldKey]) cellData[newKey] = cellData[oldKey];
+          else delete cellData[newKey];
+
+          if (mergeMap[oldKey]) mergeMap[newKey] = mergeMap[oldKey];
+          else delete mergeMap[newKey];
+
+          if (hiddenCells.has(oldKey)) {
+            hiddenCells.add(newKey);
+            hiddenCells.delete(oldKey);
+          } else {
+            hiddenCells.delete(newKey);
+          }
+        }
+
+        // Clean last
+        delete cellData[key(d, maxCol)];
+        delete mergeMap[key(d, maxCol)];
+        hiddenCells.delete(key(d, maxCol));
+      });
+
+      timeSlots.pop();
+      renderGrid();
+      showToast('Column removed');
+    }
+
+    function addTimeColumn() {
+      timeSlots.push(timeSlots[timeSlots.length - 1] + 1);
+      renderGrid();
     }
 
     // ─────────────────────────────────────────────
-    // CELL CLICK
+    // COLOR PICKER LOGIC
+    // ─────────────────────────────────────────────
+    document.querySelectorAll('.color-swatch').forEach(swatch => {
+      swatch.addEventListener('click', function() {
+        document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+        this.classList.add('active');
+        selectedColor = this.dataset.color;
+      });
+    });
+
+    function setModalColor(color) {
+      selectedColor = color || 'default';
+      document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+      const activeSwatch = document.querySelector(`.color-swatch[data-color="${selectedColor}"]`);
+      if (activeSwatch) activeSwatch.classList.add('active');
+    }
+
+    // ─────────────────────────────────────────────
+    // INTERACTIONS
     // ─────────────────────────────────────────────
     function onCellClick(e, d, c) {
-      if (mergeMode) {
-        handleMergeTarget(d, c);
-        return;
-      }
-      if (copyMode) {
-        handleCopyTarget(d, c);
-        return;
-      }
+      if (mergeMode) return handleMergeTarget(d, c);
+      if (copyMode) return handleCopyTarget(d, c);
       openEdit(d, c);
     }
 
-    // ─────────────────────────────────────────────
-    // EDIT MODAL
-    // ─────────────────────────────────────────────
     function openEdit(d, c) {
       editKey = key(d, c);
       const cell = getCell(d, c);
+      
       document.getElementById('inputRoom').value = cell.room || '';
       document.getElementById('inputSubject').value = cell.subject || '';
       document.getElementById('inputTeacher').value = cell.teacher || '';
+      setModalColor(cell.color);
+      
       const span = getSpan(d, c);
-      const timeLabel = buildTimeLabel(c, span);
+      const timeLabel = `${formatTime(timeSlots[c])} – ${formatTime(timeSlots[c + span - 1] + 1)}`;
+      
       document.getElementById('editModalMeta').textContent = `${DAYS[d]} · ${timeLabel}`;
       document.getElementById('editModal').classList.add('open');
-      document.getElementById('inputRoom').focus();
-    }
-
-    function buildTimeLabel(c, span) {
-      const start = timeSlots[c];
-      const end = timeSlots[c + span - 1] + 1;
-      return `${formatTime(start)} – ${formatTime(end)}`;
+      setTimeout(() => document.getElementById('inputSubject').focus(), 100);
     }
 
     function closeEditModal() {
@@ -1036,402 +1048,260 @@
     function saveCell() {
       if (!editKey) return;
       const [d, c] = editKey.split('_').map(Number);
-      const val = {
+      setCell(d, c, {
         room: document.getElementById('inputRoom').value.trim(),
         subject: document.getElementById('inputSubject').value.trim(),
         teacher: document.getElementById('inputTeacher').value.trim(),
-      };
-      setCell(d, c, val);
+        color: selectedColor
+      });
       closeEditModal();
       renderGrid();
-      showToast('✓ Cell saved');
+      showToast('Cell saved successfully');
     }
 
     function clearCell() {
       if (!editKey) return;
       const [d, c] = editKey.split('_').map(Number);
-      setCell(d, c, { room: '', subject: '', teacher: '' });
+      setCell(d, c, { room: '', subject: '', teacher: '', color: 'default' });
       closeEditModal();
       renderGrid();
       showToast('Cell cleared');
     }
 
     // ─────────────────────────────────────────────
-    // MERGE / UNMERGE
+    // MERGE LOGIC
     // ─────────────────────────────────────────────
     function startMerge(d, c) {
-      mergeMode = true;
-      mergeSrcDay = d;
-      mergeSrcCol = c;
+      mergeMode = true; mergeSrcDay = d; mergeSrcCol = c;
       document.getElementById('mergeBanner').classList.add('visible');
-      document.getElementById('mergeBannerLabel').textContent =
-        `${DAYS[d]} · ${colLabel(c)}`;
+      document.getElementById('mergeBannerLabel').textContent = `${DAYS[d]} · ${colLabel(c)}`;
       document.getElementById('modeBadge').className = 'mode-badge merge';
-      document.getElementById('modeBadge').innerHTML = '<span class="dot"></span> Merge Select';
+      document.getElementById('modeBadge').innerHTML = '<iconify-icon icon="solar:diagram-down-outline"></iconify-icon> Select Merge Target';
       renderGrid();
     }
 
     function cancelMerge() {
       mergeMode = false; mergeSrcDay = null; mergeSrcCol = null;
       document.getElementById('mergeBanner').classList.remove('visible');
-      document.getElementById('modeBadge').className = 'mode-badge edit';
-      document.getElementById('modeBadge').innerHTML = '<span class="dot"></span> Edit';
+      resetModeBadge();
       renderGrid();
     }
 
     function handleMergeTarget(d, c) {
-      if (d !== mergeSrcDay) { showToast('⚠ Can only merge within the same day (horizontal)'); return; }
-      if (c === mergeSrcCol) { cancelMerge(); return; }
+      if (d !== mergeSrcDay) return showToast('Must merge horizontally (same day)', 'error');
+      if (c === mergeSrcCol) return cancelMerge();
 
-      const srcCol = mergeSrcCol;
-      const tgtCol = c;
-      const d2 = d;
+      const left = Math.min(mergeSrcCol, c);
+      const right = Math.max(mergeSrcCol, c);
 
-      // Determine left/right
-      const left = Math.min(srcCol, tgtCol);
-      const right = Math.max(srcCol, tgtCol);
-
-      // Check they are horizontally adjacent (no hidden cells between them)
-      // They must be the immediately adjacent visible cells
-      // Find next visible col after left
       let nextVisible = left + 1;
-      while (nextVisible < timeSlots.length && hiddenCells.has(key(d2, nextVisible))) nextVisible++;
+      while (nextVisible < timeSlots.length && hiddenCells.has(key(d, nextVisible))) nextVisible++;
       if (nextVisible !== right) {
-        showToast('⚠ Can only merge with directly adjacent cells');
         cancelMerge();
-        return;
+        return showToast('Can only merge adjacent cells', 'error');
       }
 
-      // Check neither is already a slave
-      if (hiddenCells.has(key(d2, left)) || hiddenCells.has(key(d2, right))) {
-        showToast('⚠ That cell is already part of a merge');
+      if (hiddenCells.has(key(d, left)) || hiddenCells.has(key(d, right))) {
         cancelMerge();
-        return;
+        return showToast('Cell is already merged', 'error');
       }
 
-      // Perform merge: left cell absorbs right
-      const leftSpan = getSpan(d2, left);
-      const rightSpan = getSpan(d2, right);
-      const newSpan = leftSpan + rightSpan;
+      const newSpan = getSpan(d, left) + getSpan(d, right);
+      for (let x = right; x < right + getSpan(d, right); x++) hiddenCells.add(key(d, x));
 
-      // Mark all cells that right span covers as hidden
-      for (let x = right; x < right + rightSpan; x++) {
-        hiddenCells.add(key(d2, x));
-      }
-
-      // Merge data: combine into left (keep left data, append right teacher if different)
-      const leftData = getCell(d2, left);
-      const rightData = getCell(d2, right);
-      if (!leftData.room && rightData.room) leftData.room = rightData.room;
-      if (!leftData.subject && rightData.subject) leftData.subject = rightData.subject;
-      if (!leftData.teacher && rightData.teacher) leftData.teacher = rightData.teacher;
+      const leftData = getCell(d, left);
+      const rightData = getCell(d, right);
+      if (!leftData.room) leftData.room = rightData.room;
+      if (!leftData.subject) leftData.subject = rightData.subject;
+      if (!leftData.teacher) leftData.teacher = rightData.teacher;
       else if (leftData.teacher && rightData.teacher && leftData.teacher !== rightData.teacher) {
-        leftData.teacher = leftData.teacher + ' + ' + rightData.teacher;
+        leftData.teacher += ' + ' + rightData.teacher;
       }
-      setCell(d2, left, leftData);
-      setSpan(d2, left, newSpan);
-
+      if (leftData.color === 'default' && rightData.color !== 'default') leftData.color = rightData.color;
+      
+      setCell(d, left, leftData);
+      setSpan(d, left, newSpan);
       cancelMerge();
-      showToast('✓ Cells merged');
+      showToast('Cells merged');
+    }
+
+    function unmergeCell(d, c) {
+      const span = getSpan(d, c);
+      for (let x = c + 1; x < c + span; x++) {
+        hiddenCells.delete(key(d, x));
+        setCell(d, x, { room: '', subject: '', teacher: '', color: 'default' });
+        setSpan(d, x, 1);
+      }
+      setSpan(d, c, 1);
+      renderGrid();
+      showToast('Cell unmerged');
     }
 
     // ─────────────────────────────────────────────
-    // COPY TO MULTIPLE SLOTS
+    // COPY LOGIC
     // ─────────────────────────────────────────────
     function startCopy(d, c) {
       const cell = getCell(d, c);
-      if (!cell.room && !cell.subject && !cell.teacher) {
-        showToast('⚠ Nothing to copy — cell is empty');
-        return;
+      if (!cell.room && !cell.subject && !cell.teacher && cell.color === 'default') {
+        return showToast('Cell is empty', 'error');
       }
-      copyMode = true;
-      copySrcData = { ...cell };
-      copySrcKey = key(d, c);
-      copyTargets = new Set();
-
-      // Update banner preview
-      const preview = document.getElementById('copyPreview');
-      preview.innerHTML = [
-        cell.room ? `<span class="copy-preview-chip"><span class="lbl">Room</span><span class="val">${esc(cell.room)}</span></span>` : '',
-        cell.subject ? `<span class="copy-preview-chip"><span class="lbl">Subject</span><span class="val">${esc(cell.subject)}</span></span>` : '',
-        cell.teacher ? `<span class="copy-preview-chip"><span class="lbl">Teacher</span><span class="val">${esc(cell.teacher)}</span></span>` : '',
-      ].filter(Boolean).join('<span style="color:#86efac">·</span>');
-
+      
+      copyMode = true; copySrcData = { ...cell }; copySrcKey = key(d, c); copyTargets.clear();
+      
       document.getElementById('copyCountBadge').textContent = '0';
       document.getElementById('copyBanner').classList.add('visible');
       document.getElementById('modeBadge').className = 'mode-badge copy';
-      document.getElementById('modeBadge').innerHTML = '<span class="dot"></span> Copy Select';
+      document.getElementById('modeBadge').innerHTML = '<iconify-icon icon="solar:copy-outline"></iconify-icon> Select Paste Targets';
       renderGrid();
     }
 
     function handleCopyTarget(d, c) {
       const k = key(d, c);
-      if (k === copySrcKey) return; // don't toggle source
-      if (hiddenCells.has(k)) return; // skip slave cells
-      if (copyTargets.has(k)) {
-        copyTargets.delete(k);
-      } else {
-        copyTargets.add(k);
-      }
+      if (k === copySrcKey || hiddenCells.has(k)) return;
+      copyTargets.has(k) ? copyTargets.delete(k) : copyTargets.add(k);
       document.getElementById('copyCountBadge').textContent = copyTargets.size;
       renderGrid();
     }
 
     function applyCopy() {
-      if (copyTargets.size === 0) { showToast('⚠ No cells selected'); return; }
+      if (copyTargets.size === 0) return showToast('No targets selected', 'error');
       copyTargets.forEach(k => {
         const [d, c] = k.split('_').map(Number);
         setCell(d, c, { ...copySrcData });
       });
       const count = copyTargets.size;
       cancelCopy();
-      showToast(`✓ Pasted into ${count} cell${count > 1 ? 's' : ''}`);
+      showToast(`Pasted to ${count} slots`);
     }
 
     function cancelCopy() {
-      copyMode = false;
-      copySrcData = null;
-      copySrcKey = null;
-      copyTargets = new Set();
+      copyMode = false; copySrcData = null; copySrcKey = null; copyTargets.clear();
       document.getElementById('copyBanner').classList.remove('visible');
+      resetModeBadge();
+      renderGrid();
+    }
+
+    function resetModeBadge() {
       document.getElementById('modeBadge').className = 'mode-badge edit';
-      document.getElementById('modeBadge').innerHTML = '<span class="dot"></span> Edit';
-      renderGrid();
+      document.getElementById('modeBadge').innerHTML = '<iconify-icon icon="solar:pen-new-square-outline"></iconify-icon> Edit';
     }
 
-    function unmergeCell(d, c) {
-      const span = getSpan(d, c);
-      if (span <= 1) return;
-      // Unhide all slave cells
-      for (let x = c + 1; x < c + span; x++) {
-        hiddenCells.delete(key(d, x));
-        // Copy data to each unhidden cell (blank)
-        setCell(d, x, { room: '', subject: '', teacher: '' });
-        setSpan(d, x, 1);
-      }
-      setSpan(d, c, 1);
-      renderGrid();
-      showToast('↙ Unmerged');
-    }
 
     // ─────────────────────────────────────────────
-    // TIME COLUMNS
+    // IMPORT / EXPORT
     // ─────────────────────────────────────────────
-    function addTimeColumn() {
-      const last = timeSlots[timeSlots.length - 1];
-      timeSlots.push(last + 1);
-      renderGrid();
-      showToast('＋ Time slot added');
-    }
-
-    function removeLastTimeColumn() {
-      if (timeSlots.length <= 1) { showToast('⚠ Cannot remove last column'); return; }
-      const lastCol = timeSlots.length - 1;
-      // Remove any merges involving last column
-      for (let d = 0; d < DAYS.length; d++) {
-        const k = key(d, lastCol);
-        hiddenCells.delete(k);
-        // If a cell spans into last col, truncate it
-        for (let c = 0; c < lastCol; c++) {
-          const span = getSpan(d, c);
-          if (c + span - 1 >= lastCol) {
-            // Truncate span
-            const newSpan = lastCol - c;
-            if (newSpan <= 0) { setSpan(d, c, 1); }
-            else setSpan(d, c, newSpan);
-            for (let x = c + newSpan; x < c + span; x++) hiddenCells.delete(key(d, x));
-          }
-        }
-      }
-      timeSlots.pop();
-      renderGrid();
-      showToast('− Time slot removed');
-    }
-
-    // ─────────────────────────────────────────────
-    // EXPORT
-    // ─────────────────────────────────────────────
-    function buildExportData() {
-      const result = [];
-      for (let d = 0; d < DAYS.length; d++) {
-        for (let c = 0; c < timeSlots.length; c++) {
-          const k = key(d, c);
-          if (hiddenCells.has(k)) continue;
-          const cell = getCell(d, c);
-          if (!cell.room && !cell.subject && !cell.teacher) continue;
-          const span = getSpan(d, c);
-          const startH = timeSlots[c];
-          const endH = timeSlots[c + span - 1] + 1;
-          result.push({
-            day: DAYS[d].toLowerCase(),
-            room: cell.room || '',
-            time: `${formatTime(startH)} - ${formatTime(endH)}`,
-            subject: cell.subject || '',
-            teacher: cell.teacher || '',
-          });
-        }
-      }
-      return result;
-    }
-
     function openExport() {
-      const data = buildExportData();
-      document.getElementById('exportArea').textContent = JSON.stringify(data, null, 4);
+      const data = [];
+      DAYS.forEach((day, d) => {
+        timeSlots.forEach((_, c) => {
+          if (hiddenCells.has(key(d, c))) return;
+          const cell = getCell(d, c);
+          if (!cell.room && !cell.subject && !cell.teacher && cell.color === 'default') return;
+          const span = getSpan(d, c);
+          data.push({
+            day: day.toLowerCase(),
+            room: cell.room,
+            time: `${formatTime(timeSlots[c])} - ${formatTime(timeSlots[c + span - 1] + 1)}`,
+            subject: cell.subject,
+            teacher: cell.teacher,
+            color: cell.color || 'default'
+          });
+        });
+      });
+      document.getElementById('exportArea').value = JSON.stringify(data, null, 2);
       document.getElementById('exportModal').classList.add('open');
     }
 
-    function closeExportModal() {
-      document.getElementById('exportModal').classList.remove('open');
-    }
-
+    function closeExportModal() { document.getElementById('exportModal').classList.remove('open'); }
+    
     function copyExport() {
-      const text = document.getElementById('exportArea').textContent;
-      navigator.clipboard.writeText(text).then(() => showToast('📋 Copied!'));
+      navigator.clipboard.writeText(document.getElementById('exportArea').value).then(() => {
+        closeExportModal();
+        showToast('JSON copied to clipboard');
+      });
     }
 
-    // ─────────────────────────────────────────────
-    // IMPORT
-    // ─────────────────────────────────────────────
     function openImport() {
       document.getElementById('importArea').value = '';
       document.getElementById('importModal').classList.add('open');
     }
 
-    function closeImportModal() {
-      document.getElementById('importModal').classList.remove('open');
-    }
+    function closeImportModal() { document.getElementById('importModal').classList.remove('open'); }
 
     function doImport() {
-      let raw = document.getElementById('importArea').value.trim();
-      let data;
       try {
-        data = JSON.parse(raw);
+        const data = JSON.parse(document.getElementById('importArea').value);
+        if (!Array.isArray(data)) throw new Error();
+        
+        cellData = {}; mergeMap = {}; hiddenCells.clear();
+        const allHours = new Set();
+        
+        data.forEach(item => {
+          const m = item.time.match(/(\d+):(\d+)\s*-\s*(\d+):(\d+)/);
+          if (m) for (let h = parseInt(m[1]); h < parseInt(m[3]); h++) allHours.add(h);
+        });
+        if (allHours.size > 0) timeSlots = Array.from(allHours).sort((a, b) => a - b);
+
+        data.forEach(item => {
+          const dayIdx = DAYS.findIndex(d => d.toLowerCase() === (item.day || '').toLowerCase());
+          const m = item.time.match(/(\d+):(\d+)\s*-\s*(\d+):(\d+)/);
+          if (dayIdx === -1 || !m) return;
+          
+          const startCol = timeSlots.indexOf(parseInt(m[1]));
+          if (startCol === -1) return;
+          
+          const spanCount = parseInt(m[3]) - parseInt(m[1]);
+          setCell(dayIdx, startCol, { 
+            room: item.room || '', 
+            subject: item.subject || '', 
+            teacher: item.teacher || '',
+            color: item.color || 'default'
+          });
+          setSpan(dayIdx, startCol, spanCount);
+          for (let x = 1; x < spanCount; x++) hiddenCells.add(key(dayIdx, startCol + x));
+        });
+        
+        closeImportModal();
+        renderGrid();
+        showToast('Schedule imported');
       } catch (e) {
-        showToast('⚠ Invalid JSON'); return;
+        showToast('Invalid JSON format', 'error');
       }
-      if (!Array.isArray(data)) { showToast('⚠ Expected a JSON array'); return; }
-
-      // Reset state
-      cellData = {}; mergeMap = {}; hiddenCells = new Set();
-
-      // Determine time slots needed
-      const allHours = new Set();
-      data.forEach(item => {
-        const m = item.time.match(/(\d+):(\d+)\s*-\s*(\d+):(\d+)/);
-        if (m) {
-          const startH = parseInt(m[1]);
-          const endH = parseInt(m[3]);
-          for (let h = startH; h < endH; h++) allHours.add(h);
-        }
-      });
-      if (allHours.size === 0) { showToast('⚠ No valid time data found'); return; }
-      timeSlots = Array.from(allHours).sort((a, b) => a - b);
-
-      // Load entries
-      data.forEach(item => {
-        const dayIdx = DAYS.findIndex(d => d.toLowerCase() === (item.day || '').toLowerCase());
-        if (dayIdx === -1) return;
-        const m = item.time.match(/(\d+):(\d+)\s*-\s*(\d+):(\d+)/);
-        if (!m) return;
-        const startH = parseInt(m[1]);
-        const endH = parseInt(m[3]);
-        const startCol = timeSlots.indexOf(startH);
-        if (startCol === -1) return;
-        const spanCount = endH - startH;
-
-        setCell(dayIdx, startCol, { room: item.room || '', subject: item.subject || '', teacher: item.teacher || '' });
-        setSpan(dayIdx, startCol, spanCount);
-
-        // Mark slaves hidden
-        for (let x = 1; x < spanCount; x++) {
-          hiddenCells.add(key(dayIdx, startCol + x));
-        }
-      });
-
-      closeImportModal();
-      renderGrid();
-      showToast('✓ Imported successfully');
     }
 
     // ─────────────────────────────────────────────
-    // TOAST
+    // UI UTILS & INIT
     // ─────────────────────────────────────────────
     let toastTimer;
-    function showToast(msg) {
+    function showToast(msg, type = 'success') {
       const el = document.getElementById('toast');
-      el.textContent = msg;
+      document.getElementById('toastMsg').textContent = msg;
+      document.getElementById('toastIcon').setAttribute('icon', type === 'error' ? 'solar:danger-triangle-line-duotone' : 'solar:check-circle-line-duotone');
+      el.style.background = type === 'error' ? 'var(--danger)' : 'var(--accent)';
+      
       el.classList.add('show');
       clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+      toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
     }
 
-    // ─────────────────────────────────────────────
-    // KEYBOARD
-    // ─────────────────────────────────────────────
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
-        closeEditModal();
-        closeExportModal();
-        closeImportModal();
+        closeEditModal(); closeExportModal(); closeImportModal();
         if (mergeMode) cancelMerge();
         if (copyMode) cancelCopy();
       }
-      if (e.key === 'Enter' && document.getElementById('editModal').classList.contains('open')) {
-        if (document.activeElement.tagName !== 'BUTTON') saveCell();
-      }
     });
 
-    // Close modals on overlay click
-    ['editModal', 'exportModal', 'importModal'].forEach(id => {
-      document.getElementById(id).addEventListener('click', function (e) {
+    document.querySelectorAll('.modal-overlay').forEach(el => {
+      el.addEventListener('mousedown', function(e) {
         if (e.target === this) {
           this.classList.remove('open');
-          if (id === 'editModal') editKey = null;
+          if (this.id === 'editModal') editKey = null;
         }
       });
     });
 
-    // ─────────────────────────────────────────────
-    // INIT — load sample data
-    // ─────────────────────────────────────────────
-    const SAMPLE_DATA = [
-      { "day": "monday", "room": "", "time": "09:00 - 10:00", "subject": "", "teacher": "" },
-      { "day": "tuesday", "room": "", "time": "10:00 - 11:00", "subject": "", "teacher": "" },
-      { "day": "wednesday", "room": "", "time": "11:00 - 12:00", "subject": "", "teacher": "" },
-      { "day": "thursday", "room": "", "time": "12:00 - 13:00", "subject": "", "teacher": "" },
-      { "day": "friday", "room": "", "time": "13:00 - 14:00", "subject": "", "teacher": "" },
-      { "day": "friday", "room": "", "time": "14:00 - 15:00", "subject": "", "teacher": "" },
-      { "day": "friday", "room": "", "time": "15:00 - 16:00", "subject": "", "teacher": "" },
-      { "day": "saturday", "room": "", "time": "16:00 - 17:00", "subject": "", "teacher": "" }
-    ];
-
-    (function loadSample() {
-      // Determine time slots
-      const allHours = new Set();
-      SAMPLE_DATA.forEach(item => {
-        const m = item.time.match(/(\d+):(\d+)\s*-\s*(\d+):(\d+)/);
-        if (m) for (let h = parseInt(m[1]); h < parseInt(m[3]); h++) allHours.add(h);
-      });
-      timeSlots = Array.from(allHours).sort((a, b) => a - b);
-
-      SAMPLE_DATA.forEach(item => {
-        const dayIdx = DAYS.findIndex(d => d.toLowerCase() === item.day.toLowerCase());
-        if (dayIdx === -1) return;
-        const m = item.time.match(/(\d+):(\d+)\s*-\s*(\d+):(\d+)/);
-        if (!m) return;
-        const startH = parseInt(m[1]);
-        const endH = parseInt(m[3]);
-        const startCol = timeSlots.indexOf(startH);
-        if (startCol === -1) return;
-        const spanCount = endH - startH;
-        setCell(dayIdx, startCol, { room: item.room, subject: item.subject, teacher: item.teacher });
-        setSpan(dayIdx, startCol, spanCount);
-        for (let x = 1; x < spanCount; x++) hiddenCells.add(key(dayIdx, startCol + x));
-      });
-
-      renderGrid();
-    })();
+    renderGrid();
   </script>
 </body>
-
 </html>
