@@ -4,7 +4,7 @@ import httpx
 import asyncio
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
-from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form, staticfiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from supabase import create_client, Client
@@ -98,6 +98,15 @@ async def get_current_user(token: str) -> dict:
         }
     except JWTError:
         raise credentials_exception
+
+# Mount the static directory so assets load correctly
+app.mount("/static", staticfiles.StaticFiles(directory="static"), name="static")
+
+
+@app.get("/")
+async def serve_home():
+    # Point directly to the file inside the static folder
+    return FileResponse("static/index.html")
 
 # -------------------------------------------------------------------------
 # 1. CENTRALIZED AUTHENTICATION CONTROLLER
