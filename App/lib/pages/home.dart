@@ -1511,105 +1511,134 @@ class _MyHomePageState extends State<MyHomePage> {
   // WIDGET LAYOUTS
   // =========================================================================
   Widget _buildAcademicIdentityCard() {
-    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
-    final user = AuthService.currentUser;
+  final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+  final user = AuthService.currentUser;
 
-    final name = user?.name ?? 'Student';
-    final firstName = name.split(' ').first;
-    final roll = user?.rollNumber ?? 'Not Assigned';
-    final branch = user?.department ?? 'B.Tech';
-    final semester = user?.semester ?? '4';
+  final name = user?.name ?? 'Student';
+  final firstName = name.split(' ').first;
+  final roll = user?.rollNumber ?? 'Not Assigned';
+  final branch = user?.department ?? 'B.Tech';
+  final semester = user?.semester ?? '4';
+  
+  // Assume you get your DOB string from the user object or another source
+  final dobString = user?.dob ?? '2000-01-01'; 
 
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        gradient: systemExt.primaryGradient,
-        borderRadius: BorderRadius.circular(EduDesignTokens.radius3xl),
-        boxShadow: systemExt.authCardShadow,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '$_greeting,',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.8),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
+  // --- DATE COMPARISON LOGIC ---
+  final now = DateTime.now();
+  final currentMonth = now.month.toString().padLeft(2, '0');
+  final currentDay = now.day.toString().padLeft(2, '0');
+  
+  // Option A: Literal match (YYYY-MM-DD matches perfectly)
+  final currentDateString = "${now.year}-$currentMonth-$currentDay";
+  final isExactMatch = currentDateString == dobString;
+
+  // Option B: Birthday match (Only MM-DD matches) - Recommended if this is a birthday card
+  // Extracts 'MM-DD' from 'YYYY-MM-DD'
+  final isBirthday = dobString.length >= 10 && dobString.substring(5) == "$currentMonth-$currentDay";
+
+  // Choose the boolean that fits your need (using isBirthday here as an example)
+  final showCustomBackground = isBirthday; 
+  debugPrint("**************");
+  debugPrint(isBirthday.toString());
+
+  return Container(
+    padding: const EdgeInsets.all(24),
+    decoration: BoxDecoration(
+      // --- CONDITIONAL BACKGROUND ---
+      // If showing image, gradient must be null. If showing gradient, image must be null.
+      gradient: isBirthday ? null : systemExt.primaryGradient,
+      image: showCustomBackground
+          ? const DecorationImage(
+              image: AssetImage('assets/images/birthday_bg.png'), // Replace with your image path
+              fit: BoxFit.cover, // Adjust this based on how you want the image to stretch
+            )
+          : null,
+      borderRadius: BorderRadius.circular(EduDesignTokens.radius3xl),
+      boxShadow: systemExt.authCardShadow,
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isBirthday ? 'Happy B\'day dear, ' : '$_greeting',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.8),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      firstName,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: -0.5,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
-                  border: Border.all(color: Colors.white.withOpacity(0.4)),
-                ),
-                child: const Center(
-                  child: SolarIcon(
-                    SolarIcons.User,
-                    weight: SolarIconWeight.bold,
-                    color: Colors.white,
-                    size: 28,
                   ),
+                  const SizedBox(height: 4),
+                  Text(
+                    firstName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: -0.5,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+                border: Border.all(color: Colors.white.withOpacity(0.4)),
+              ),
+              child: Center(
+                child: SolarIcon(
+                  isBirthday ? SolarIcons.Gift : SolarIcons.User,
+                  weight: SolarIconWeight.bold,
+                  color: Colors.white,
+                  size: 28,
                 ),
               ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 32),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildIdentityMetric('ROLL NO', roll),
+              Container(
+                width: 1,
+                height: 30,
+                color: Colors.white.withOpacity(0.2),
+              ),
+              _buildIdentityMetric('COURSE', branch),
+              Container(
+                width: 1,
+                height: 30,
+                color: Colors.white.withOpacity(0.2),
+              ),
+              _buildIdentityMetric('SEMESTER', semester),
             ],
           ),
-          const SizedBox(height: 32),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _buildIdentityMetric('ROLL NO', roll),
-                Container(
-                  width: 1,
-                  height: 30,
-                  color: Colors.white.withOpacity(0.2),
-                ),
-                _buildIdentityMetric('COURSE', branch),
-                Container(
-                  width: 1,
-                  height: 30,
-                  color: Colors.white.withOpacity(0.2),
-                ),
-                _buildIdentityMetric('SEMESTER', semester),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+        ),
+      ],
+    ),
+  );
+}
 
   Widget _buildIdentityMetric(String label, String value) {
     return Column(

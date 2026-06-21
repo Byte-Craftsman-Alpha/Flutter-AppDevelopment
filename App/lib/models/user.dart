@@ -17,6 +17,7 @@ class UserModel {
   final String? fatherName;
   final String? motherName;
   final String? semester;
+  final String? dob;
 
 
   UserModel({
@@ -35,7 +36,8 @@ class UserModel {
     this.gender,
     this.fatherName,
     this.motherName,
-    this.semester, required String dob,
+    this.semester, 
+    required this.dob,
 
   });
 
@@ -57,7 +59,8 @@ class UserModel {
       gender: map['gender']?.toString(),
       fatherName: map['father_name']?.toString(),
       motherName: map['mother_name']?.toString(),
-      semester: map['semester']?.toString(), dob: '',
+      semester: map['semester']?.toString(), 
+      dob: map['dob']?.toString(),
     );
   }
 
@@ -80,6 +83,7 @@ class UserModel {
       'father_name': fatherName,
       'mother_name': motherName,
       'semester': semester,
+      'dob': dob,
     };
   }
 
