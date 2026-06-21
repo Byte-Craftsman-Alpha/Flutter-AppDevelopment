@@ -1,3 +1,4 @@
+import 'dart:async'; // 💡 Explicit import for TimeoutException
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -357,14 +358,93 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  // 💡 NEW UPDATED PREFERENCE METHOD: Modals + Caching + Global Triggers
   Future<void> _updateSchedulePreference(String? newValue) async {
-    setState(() => _selectedSchedule = newValue);
-    if (newValue != null) {
-      await AuthService.saveSubscribedSchedule(newValue);
-      _showToast("Timetable updated to $newValue", isError: false);
-    } else {
-      await AuthService.saveSubscribedSchedule('');
-      _showToast("Timetable subscription removed", isError: false);
+    if (newValue == null || newValue == _selectedSchedule) return;
+
+    // 1. Show Confirmation Dialog
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Theme.of(context).cardColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl)),
+        title: Text('Change Schedule?', style: Theme.of(context).textTheme.titleLarge),
+        content: Text(
+          'Do you want to switch your schedule to $newValue? This will download the new timetable and replace your current offline data.',
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).primaryColor,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl)),
+            ),
+            child: const Text('Confirm', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _isScheduleLoading = true);
+
+    // 2. Fetch and Cache Data directly
+    try {
+      final user = AuthService.currentUser;
+      final dept = user?.department ?? '';
+      final semester = user?.semester ?? '4';
+      final token = await AuthService.getAuthToken();
+
+      final url = Uri.parse(
+        'https://flutter-app-development-mu.vercel.app/api/schedule/fetch'
+        '?department=${Uri.encodeComponent(dept)}'
+        '&semester=${Uri.encodeComponent(semester)}'
+        '&group_name=${Uri.encodeComponent(newValue)}'
+      );
+
+      final response = await http.get(url, headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      }).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final List<dynamic> responseData = jsonDecode(response.body);
+        
+        final scheduleRecord = responseData.isNotEmpty ? responseData.first : {};
+        final List<dynamic> rawClassesList = scheduleRecord['ScheduleLists'] ?? scheduleRecord['schedule_lists'] ?? [];
+
+        // Save new schedule directly to persistent cache
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('offline_cache_schedule_$newValue', json.encode(rawClassesList));
+
+        // Save preference and update UI
+        await AuthService.saveSubscribedSchedule(newValue);
+        if (mounted) {
+          setState(() => _selectedSchedule = newValue);
+        }
+
+        // 3. Trigger global refresh for Home and Calendar tabs
+        AppStateNotifier.triggerScheduleRefresh();
+
+        _showToast("Timetable updated and synced successfully", isError: false);
+      } else {
+        throw Exception('Server rejected request');
+      }
+    } on SocketException catch (_) {
+      _showToast("Failed: No internet connection. Schedule unchanged.", isError: true);
+    } on TimeoutException catch (_) {
+      _showToast("Failed: Connection timed out. Schedule unchanged.", isError: true);
+    } catch (e) {
+      debugPrint("Schedule Change Error: $e");
+      _showToast("Failed to change schedule due to an unexpected error.", isError: true);
+    } finally {
+      if (mounted) setState(() => _isScheduleLoading = false);
     }
   }
 
@@ -560,19 +640,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               child: DropdownButton<String>(
                                 isExpanded: true,
                                 value: _selectedSchedule,
-                                hint: Text('Select your academic section', style: TextStyle(color: EduDesignTokens.slate400, fontSize: 14)),
+                                hint: Text('Select your academic schedule', style: TextStyle(color: EduDesignTokens.slate400, fontSize: 14)),
                                 icon: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.AltArrowDown, weight: SolarIconWeight.outline), color: EduDesignTokens.slate400),
                                 dropdownColor: Theme.of(context).cardColor,
                                 borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
                                 items: [
                                   DropdownMenuItem<String>(
                                     value: null,
-                                    child: Text('Unassigned / No Section', style: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold, fontSize: 14)),
+                                    child: Text('Unassigned / No Schedule', style: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold, fontSize: 14)),
                                   ),
                                   ..._availableSchedules.map((String value) {
                                     return DropdownMenuItem<String>(
                                       value: value,
-                                      child: Text('Section: $value', style: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold, fontSize: 14)),
+                                      child: Text('$value', style: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold, fontSize: 14)),
                                     );
                                   }),
                                 ],

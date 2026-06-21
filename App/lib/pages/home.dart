@@ -71,8 +71,18 @@ class _MyHomePageState extends State<MyHomePage> {
     _determineGreeting();
     _fetchDashboardContext();
 
-    // 💡 FIXED: Properly chain the async setup so alarms don't try to sync before the plugin initializes
+    // 💡 Properly chain the async setup so alarms don't try to sync before the plugin initializes
     _initNotificationsAndReminders();
+    
+    // 💡 Listen for schedule changes from ProfileScreen
+    AppStateNotifier.scheduleRefreshNotifier.addListener(_onGlobalScheduleUpdate);
+  }
+
+  // Re-fetch local cache when the schedule has been updated across tabs
+  void _onGlobalScheduleUpdate() {
+    if (mounted) {
+      _fetchDashboardContext();
+    }
   }
 
   // Safely sequences the loading pipeline
@@ -83,6 +93,8 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   void dispose() {
+    // 💡 Always unregister global listeners on memory disposal
+    AppStateNotifier.scheduleRefreshNotifier.removeListener(_onGlobalScheduleUpdate);
     super.dispose();
   }
 
@@ -204,7 +216,11 @@ class _MyHomePageState extends State<MyHomePage> {
               (b['time'] ?? '').toString(),
             ),
           );
+        } else {
+          _todayClasses = [];
         }
+      } else {
+          _todayClasses = [];
       }
 
       final prefs = await SharedPreferences.getInstance();
@@ -268,7 +284,6 @@ class _MyHomePageState extends State<MyHomePage> {
       iOS: iosSettings,
     );
 
-    // Uses fully named parameter expected by plugin v17.0+
     await _localNotif.initialize(settings: initSettings);
 
     final androidPlatform = _localNotif
@@ -287,7 +302,6 @@ class _MyHomePageState extends State<MyHomePage> {
     try {
       final prefs = await SharedPreferences.getInstance();
 
-      // 💡 FIXED: Uses student-specific storage key to prevent cross-account leaks
       final String userRoll = AuthService.currentUser?.rollNumber ?? 'default';
       final str =
           prefs.getString('offline_tasks_$userRoll') ??
@@ -305,8 +319,6 @@ class _MyHomePageState extends State<MyHomePage> {
         }
       }
 
-      // 💡 CRITICAL FIX: Re-syncs notifications upon loading!
-      // If the device rebooted, all OS alarms were wiped. This instantly restores them securely.
       await _syncScheduledNotifications();
     } catch (e) {
       debugPrint("Error loading reminders: $e");
@@ -352,7 +364,6 @@ class _MyHomePageState extends State<MyHomePage> {
         final int notifId = r['id'].hashCode.abs() % 100000;
 
         try {
-          // Attempt exact scheduling first
           await _localNotif.zonedSchedule(
             id: notifId,
             title: r['title'] ?? 'Task Reminder',
@@ -362,7 +373,6 @@ class _MyHomePageState extends State<MyHomePage> {
             androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
           );
         } catch (e) {
-          // Graceful fallback to inexact scheduling if Android 14+ blocks the exact alarm
           await _localNotif.zonedSchedule(
             id: notifId,
             title: r['title'] ?? 'Task Reminder',
@@ -1511,134 +1521,120 @@ class _MyHomePageState extends State<MyHomePage> {
   // WIDGET LAYOUTS
   // =========================================================================
   Widget _buildAcademicIdentityCard() {
-  final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
-  final user = AuthService.currentUser;
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+    final user = AuthService.currentUser;
 
-  final name = user?.name ?? 'Student';
-  final firstName = name.split(' ').first;
-  final roll = user?.rollNumber ?? 'Not Assigned';
-  final branch = user?.department ?? 'B.Tech';
-  final semester = user?.semester ?? '4';
-  
-  // Assume you get your DOB string from the user object or another source
-  final dobString = user?.dob ?? '2000-01-01'; 
+    final name = user?.name ?? 'Student';
+    final firstName = name.split(' ').first;
+    final roll = user?.rollNumber ?? 'Not Assigned';
+    final branch = user?.department ?? 'B.Tech';
+    final semester = user?.semester ?? '4';
+    
+    final dobString = user?.dob ?? '2000-01-01'; 
 
-  // --- DATE COMPARISON LOGIC ---
-  final now = DateTime.now();
-  final currentMonth = now.month.toString().padLeft(2, '0');
-  final currentDay = now.day.toString().padLeft(2, '0');
-  
-  // Option A: Literal match (YYYY-MM-DD matches perfectly)
-  final currentDateString = "${now.year}-$currentMonth-$currentDay";
-  final isExactMatch = currentDateString == dobString;
+    final now = DateTime.now();
+    final currentMonth = now.month.toString().padLeft(2, '0');
+    final currentDay = now.day.toString().padLeft(2, '0');
+    
+    final isBirthday = dobString.length >= 10 && dobString.substring(5) == "$currentMonth-$currentDay";
+    final showCustomBackground = isBirthday; 
 
-  // Option B: Birthday match (Only MM-DD matches) - Recommended if this is a birthday card
-  // Extracts 'MM-DD' from 'YYYY-MM-DD'
-  final isBirthday = dobString.length >= 10 && dobString.substring(5) == "$currentMonth-$currentDay";
-
-  // Choose the boolean that fits your need (using isBirthday here as an example)
-  final showCustomBackground = isBirthday; 
-  debugPrint("**************");
-  debugPrint(isBirthday.toString());
-
-  return Container(
-    padding: const EdgeInsets.all(24),
-    decoration: BoxDecoration(
-      // --- CONDITIONAL BACKGROUND ---
-      // If showing image, gradient must be null. If showing gradient, image must be null.
-      gradient: isBirthday ? null : systemExt.primaryGradient,
-      image: showCustomBackground
-          ? const DecorationImage(
-              image: AssetImage('assets/images/birthday_bg.png'), // Replace with your image path
-              fit: BoxFit.cover, // Adjust this based on how you want the image to stretch
-            )
-          : null,
-      borderRadius: BorderRadius.circular(EduDesignTokens.radius3xl),
-      boxShadow: systemExt.authCardShadow,
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isBirthday ? 'Happy B\'day dear, ' : '$_greeting',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.8),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: isBirthday ? null : systemExt.primaryGradient,
+        image: showCustomBackground
+            ? const DecorationImage(
+                image: AssetImage('assets/images/birthday_bg.png'),
+                fit: BoxFit.cover,
+              )
+            : null,
+        borderRadius: BorderRadius.circular(EduDesignTokens.radius3xl),
+        boxShadow: systemExt.authCardShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isBirthday ? 'Happy B\'day dear, ' : '$_greeting',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.8),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    firstName,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: -0.5,
+                    const SizedBox(height: 4),
+                    Text(
+                      firstName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: -0.5,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
-                border: Border.all(color: Colors.white.withOpacity(0.4)),
-              ),
-              child: Center(
-                child: SolarIcon(
-                  isBirthday ? SolarIcons.Gift : SolarIcons.User,
-                  weight: SolarIconWeight.bold,
-                  color: Colors.white,
-                  size: 28,
+                  ],
                 ),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 32),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildIdentityMetric('ROLL NO', roll),
               Container(
-                width: 1,
-                height: 30,
-                color: Colors.white.withOpacity(0.2),
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+                  border: Border.all(color: Colors.white.withOpacity(0.4)),
+                ),
+                child: Center(
+                  child: SolarIcon(
+                    isBirthday ? SolarIcons.Gift : SolarIcons.User,
+                    weight: SolarIconWeight.bold,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                ),
               ),
-              _buildIdentityMetric('COURSE', branch),
-              Container(
-                width: 1,
-                height: 30,
-                color: Colors.white.withOpacity(0.2),
-              ),
-              _buildIdentityMetric('SEMESTER', semester),
             ],
           ),
-        ),
-      ],
-    ),
-  );
-}
+          const SizedBox(height: 32),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _buildIdentityMetric('ROLL NO', roll),
+                Container(
+                  width: 1,
+                  height: 30,
+                  color: Colors.white.withOpacity(0.2),
+                ),
+                _buildIdentityMetric('COURSE', branch),
+                Container(
+                  width: 1,
+                  height: 30,
+                  color: Colors.white.withOpacity(0.2),
+                ),
+                _buildIdentityMetric('SEMESTER', semester),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildIdentityMetric(String label, String value) {
     return Column(
@@ -1879,11 +1875,95 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  // 💡 NEW COMPONENT: Independent Dedicated Tile For Events
+  Widget _buildTodayEventTile() {
+    if (_todayEvents.isEmpty) return const SizedBox.shrink(); // Hide entirely if no events
+
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              "Today's Events",
+              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        ..._todayEvents.map((event) {
+          return Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: EduComponents.card(
+              context: context,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: systemExt.btnDangerBg,
+                  borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
+                  border: Border.all(color: systemExt.btnDangerBorder, width: 1.5),
+                ),
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: EduDesignTokens.rose100.withOpacity(0.3),
+                        shape: BoxShape.circle,
+                      ),
+                      child: EduComponents.icon(
+                        context: context,
+                        iconData: Icons.star_rounded,
+                        color: systemExt.btnDangerText,
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            (event['Type'] ?? 'Event').toString().toUpperCase(),
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: systemExt.btnDangerText,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            event['Title'] ?? 'Special Event',
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                              color: systemExt.btnDangerText,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+        const SizedBox(height: 32),
+      ],
+    );
+  }
+
   Widget _buildTodaySchedule() {
     final theme = Theme.of(context);
     final systemExt = theme.extension<EduPortalThemeExtension>()!;
 
-    if (_todayClasses.isEmpty && _todayEvents.isEmpty) {
+    if (_todayClasses.isEmpty) {
       return EduComponents.card(
         context: context,
         child: Padding(
@@ -1915,73 +1995,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
     final List<Widget> scheduleWidgets = [];
 
-    // Render Events First (Holidays/Special Events)
-    for (var event in _todayEvents) {
-      scheduleWidgets.add(
-        Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          child: EduComponents.card(
-            context: context,
-            child: Container(
-              decoration: BoxDecoration(
-                color: systemExt.btnDangerBg,
-                borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
-                border: Border.all(
-                  color: systemExt.btnDangerBorder,
-                  width: 1.5,
-                ),
-              ),
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: EduDesignTokens.rose100.withOpacity(0.3),
-                      shape: BoxShape.circle,
-                    ),
-                    child: EduComponents.icon(
-                      context: context,
-                      iconData: Icons.star_rounded,
-                      color: systemExt.btnDangerText,
-                      size: 24,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          (event['Type'] ?? 'Event').toString().toUpperCase(),
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: systemExt.btnDangerText,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          event['Title'] ?? 'Special Event',
-                          style: theme.textTheme.bodyLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                            color: systemExt.btnDangerText,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    // Render Remaining / Active Classes
+    // Render Remaining / Active Classes Only (Events are rendered separately now)
     for (var classData in _todayClasses) {
       final rawTime = classData['time'] ?? '10:00 - 11:00';
       final subject = classData['subject'] ?? 'Unspecified Subject';
@@ -2243,7 +2257,9 @@ class _MyHomePageState extends State<MyHomePage> {
                   _buildQuickActionsBar(),
                   const SizedBox(height: 32),
 
-                  // 3. Today's Academic Schedule Pipeline
+                  // 3. Isolated Event & Schedule Render Pipeline
+                  _buildTodayEventTile(), // Will automatically vanish if no events are active
+                  
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [

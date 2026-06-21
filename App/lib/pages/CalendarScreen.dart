@@ -46,10 +46,20 @@ class _CalendarScreenState extends State<CalendarScreen> {
     super.initState();
     _currentMonthDate = DateTime.now();
     _loadInitialSubscriptionAndData();
+    
+    // 💡 Listen for schedule changes from ProfileScreen to instantly redraw 
+    AppStateNotifier.scheduleRefreshNotifier.addListener(_onGlobalScheduleUpdate);
+  }
+
+  void _onGlobalScheduleUpdate() {
+    if (mounted) {
+      _checkAndResetFocus();
+    }
   }
 
   @override
   void dispose() {
+    AppStateNotifier.scheduleRefreshNotifier.removeListener(_onGlobalScheduleUpdate);
     _pageController.dispose();
     super.dispose();
   }
@@ -103,6 +113,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
         });
       }
       _initializeScheduleAndCalendar(latestSub);
+    } else {
+      // Re-initialize to ensure newly synced local storage reads are displayed
+      _initializeScheduleAndCalendar(latestSub); 
     }
   }
 
