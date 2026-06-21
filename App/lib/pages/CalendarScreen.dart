@@ -46,10 +46,20 @@ class _CalendarScreenState extends State<CalendarScreen> {
     super.initState();
     _currentMonthDate = DateTime.now();
     _loadInitialSubscriptionAndData();
+    
+    // 💡 Listen for schedule changes from ProfileScreen to instantly redraw 
+    AppStateNotifier.scheduleRefreshNotifier.addListener(_onGlobalScheduleUpdate);
+  }
+
+  void _onGlobalScheduleUpdate() {
+    if (mounted) {
+      _checkAndResetFocus(forceSync: true);
+    }
   }
 
   @override
   void dispose() {
+    AppStateNotifier.scheduleRefreshNotifier.removeListener(_onGlobalScheduleUpdate);
     _pageController.dispose();
     super.dispose();
   }
@@ -91,7 +101,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     });
   }
 
-  Future<void> _checkAndResetFocus() async {
+  Future<void> _checkAndResetFocus({bool forceSync = false}) async {
     _resetToToday();
     final sub = await AuthService.getSubscribedSchedule();
     final latestSub = (sub != null && sub.isNotEmpty) ? sub : null;
@@ -102,8 +112,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
           _currentSubscription = latestSub;
         });
       }
-      _initializeScheduleAndCalendar(latestSub);
     }
+    
+    _initializeScheduleAndCalendar(latestSub, forceSync: forceSync);
   }
 
   // Cache Utilities optimized to run sequentially
@@ -131,7 +142,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     return compute(_isolateJsonDecodeList, jsonStr); 
   }
 
-  Future<void> _initializeScheduleAndCalendar(String? groupName) async {
+  Future<void> _initializeScheduleAndCalendar(String? groupName, {bool forceSync = false}) async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -150,10 +161,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
     if (cachedClasses != null) _distributeClasses(cachedClasses);
     if (cachedCalendar != null) _indexMonthlyEvents(cachedCalendar);
 
-    // Stop loading early if we have the caches we require
+    // Stop loading early if we have the caches we require AND we aren't forcing a sync
     final bool hasNeededCache = (groupName == null || cachedClasses != null) && (cachedCalendar != null);
     
-    if (hasNeededCache) {
+    if (hasNeededCache && !forceSync) {
       if (mounted) setState(() { _isLoading = false; });
       _syncAllLiveRecords(groupName, isSilentBackgroundSync: true);
     } else {
@@ -162,39 +173,43 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   void _indexMonthlyEvents(List<Map<String, dynamic>> rawEventsList) {
-    _monthlyEvents.clear();
-    for (var item in rawEventsList) {
-      final rawDate = item['Date']?.toString() ?? item['date']?.toString() ?? '';
-      if (rawDate.isNotEmpty) {
-        _monthlyEvents.putIfAbsent(rawDate, () => []).add(item);
+    setState(() {
+      _monthlyEvents.clear();
+      for (var item in rawEventsList) {
+        final rawDate = item['Date']?.toString() ?? item['date']?.toString() ?? '';
+        if (rawDate.isNotEmpty) {
+          _monthlyEvents.putIfAbsent(rawDate, () => []).add(item);
+        }
       }
-    }
+    });
   }
 
   void _distributeClasses(List<Map<String, dynamic>> rawClassesList) {
-    for (var key in _dailyClasses.keys) {
-      _dailyClasses[key] = [];
-    }
-    for (var item in rawClassesList) {
-      final String day = (item['day'] ?? '').toString().toLowerCase().trim();
-      if (_dailyClasses.containsKey(day)) {
-        _dailyClasses[day]!.add(item);
+    setState(() {
+      for (var key in _dailyClasses.keys) {
+        _dailyClasses[key] = [];
       }
-    }
-    for (var dayKey in _dailyClasses.keys) {
-      _dailyClasses[dayKey]!.sort((a, b) => (a['time'] ?? '').toString().compareTo((b['time'] ?? '').toString()));
-    }
+      for (var item in rawClassesList) {
+        final String day = (item['day'] ?? '').toString().toLowerCase().trim();
+        if (_dailyClasses.containsKey(day)) {
+          _dailyClasses[day]!.add(item);
+        }
+      }
+      for (var dayKey in _dailyClasses.keys) {
+        _dailyClasses[dayKey]!.sort((a, b) => (a['time'] ?? '').toString().compareTo((b['time'] ?? '').toString()));
+      }
 
-    final weekdayIndex = DateTime.now().weekday;
-    int targetPage = 0;
-    if (weekdayIndex >= 1 && weekdayIndex <= 6) {
-      targetPage = weekdayIndex - 1;
-    }
-    _activeDayIndex = targetPage;
+      final weekdayIndex = DateTime.now().weekday;
+      int targetPage = 0;
+      if (weekdayIndex >= 1 && weekdayIndex <= 6) {
+        targetPage = weekdayIndex - 1;
+      }
+      _activeDayIndex = targetPage;
+    });
     
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_pageController.hasClients) {
-        _pageController.jumpToPage(targetPage);
+        _pageController.jumpToPage(_activeDayIndex);
       }
     });
   }

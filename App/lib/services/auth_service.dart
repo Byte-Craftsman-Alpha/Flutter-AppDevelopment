@@ -1,5 +1,15 @@
+import 'package:flutter/foundation.dart'; // 💡 Added for ValueNotifier
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user.dart';
+
+// 💡 Global Event Notifier - Broadcasts updates to all active tabs
+class AppStateNotifier {
+  static final ValueNotifier<int> scheduleRefreshNotifier = ValueNotifier(0);
+  
+  static void triggerScheduleRefresh() {
+    scheduleRefreshNotifier.value++;
+  }
+}
 
 class AuthService {
   static const String _userSessionKey = 'user_session_data';
