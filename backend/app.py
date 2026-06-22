@@ -4,7 +4,7 @@ import httpx
 import asyncio
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
-from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form, staticfiles
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form, staticfiles, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from supabase import create_client, Client
@@ -271,7 +271,7 @@ async def delete_vault_record(record_id: str, token: str):
 # 4. CHAT ROOM MIDDLEWARE ROUTER & DISPATCHER
 # -------------------------------------------------------------------------
 @app.post("/api/chat/send")
-async def handle_chat_delivery(message: dict, token: str):
+async def handle_chat_delivery(message: dict, token: str, background_tasks: BackgroundTasks):
     user = await get_current_user(token)
     
     chat_entry = {
@@ -289,7 +289,8 @@ async def handle_chat_delivery(message: dict, token: str):
     
     db_response = supabase.table("GroupChats").insert(chat_entry).execute()
     
-    broadcast_notification(
+    background_tasks.add_task(
+        broadcast_notification,
         title=f"New Message from {user['name']}",
         body=chat_entry["message_body"][:100] + ("..." if len(chat_entry["message_body"]) > 100 else ""),
         topic="general"
