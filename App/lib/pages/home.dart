@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../constants/widgets.dart';
 import 'package:flutter/material.dart';
@@ -24,6 +26,212 @@ import 'ChatScreen.dart';
 import 'CalendarScreen.dart';
 import 'VaultScreen.dart';
 import 'ProfileScreen.dart';
+
+/// Top-level background notification handler.
+/// Register this in your background message receiver service (e.g. Firebase Cloud Messaging onBackgroundMessage handler)
+/// to instantly process card background changes even if the application is fully terminated.
+@pragma('vm:entry-point')
+Future<void> onSilentPushNotificationReceived(Map<String, dynamic> messageData) async {
+  if (messageData.containsKey('image_url')) {
+    await BackgroundCardBgService.processSilentNotification(messageData);
+  }
+}
+
+/// Dynamic Persistent Storage & Resilient Background Downloader Service
+class BackgroundCardBgService {
+  static const String _keyActiveUrl = 'custom_bg_active_url';
+  static const String _keyLocalPath = 'custom_bg_local_path';
+  static const String _keyExpiry = 'custom_bg_expiry';
+  static const String _keyStatus = 'custom_bg_download_status';
+
+  static Future<void> processSilentNotification(Map<String, dynamic> payload) async {
+    final String? imageUrl = payload['image_url']?.toString();
+    final String? expiryStr = payload['expiry_time']?.toString(); // Supports ISO timestamp or remaining duration in seconds
+
+    if (imageUrl == null || imageUrl.isEmpty) return;
+
+    DateTime? expiry;
+    if (expiryStr != null) {
+      expiry = DateTime.tryParse(expiryStr);
+      if (expiry == null) {
+        final parsedInt = int.tryParse(expiryStr);
+        if (parsedInt != null) {
+          if (parsedInt > 100000000000) {
+            expiry = DateTime.fromMillisecondsSinceEpoch(parsedInt);
+          } else {
+            expiry = DateTime.now().add(Duration(seconds: parsedInt));
+          }
+        }
+      }
+    }
+
+    // Default expiry duration is 24 hours if unspecified
+    expiry ??= DateTime.now().add(const Duration(hours: 24));
+
+    if (expiry.isBefore(DateTime.now())) {
+      await clearCustomBackground();
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyExpiry, expiry.toIso8601String());
+
+    final String? currentUrl = prefs.getString(_keyActiveUrl);
+    final String? currentPath = prefs.getString(_keyLocalPath);
+
+    // If new remote image url is pushed, reset and trigger progressive resilient download
+    if (currentUrl != imageUrl || currentPath == null || !File(currentPath).existsSync()) {
+      await prefs.setString(_keyActiveUrl, imageUrl);
+      await prefs.setString(_keyStatus, 'downloading');
+      
+      // Perform background download task with exponential backoff retries
+      _startBackgroundDownload(imageUrl);
+    }
+  }
+
+  static Future<void> _startBackgroundDownload(String url) async {
+    int retries = 5;
+    int delaySeconds = 2;
+    bool success = false;
+
+    while (retries > 0 && !success) {
+      try {
+        success = await downloadImageResilient(url);
+        if (success) break;
+      } catch (e) {
+        debugPrint("Background custom image download attempt failed: $e");
+      }
+      retries--;
+      if (!success && retries > 0) {
+        await Future.delayed(Duration(seconds: delaySeconds));
+        delaySeconds *= 2; // Exponential backoff to avoid spamming user's data on slow networks
+      }
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    if (success) {
+      await prefs.setString(_keyStatus, 'completed');
+      // Trigger update globally across any active screens
+      try {
+        AppStateNotifier.scheduleRefreshNotifier.value = AppStateNotifier.scheduleRefreshNotifier.value + 1;
+      } catch (_) {}
+    } else {
+      await prefs.setString(_keyStatus, 'failed');
+    }
+  }
+
+  /// Implements range-resumable chunk downloading to avoid redundant data usage 
+  /// and prevent rendering crashed or corrupted files on sudden connection drops.
+  static Future<bool> downloadImageResilient(String urlString) async {
+    try {
+      final uri = Uri.parse(urlString);
+      final directory = await getApplicationDocumentsDirectory();
+      final filename = "custom_card_bg_${urlString.hashCode}.png";
+      final finalFile = File("${directory.path}/$filename");
+      final tempFile = File("${directory.path}/$filename.tmp");
+
+      int existingLength = 0;
+      if (tempFile.existsSync()) {
+        existingLength = tempFile.lengthSync();
+      }
+
+      final client = http.Client();
+      final request = http.Request('GET', uri);
+
+      // Add Range header for partial resume if there's progressive cache
+      if (existingLength > 0) {
+        request.headers['Range'] = 'bytes=$existingLength-';
+      }
+
+      final response = await client.send(request);
+
+      if (response.statusCode == 200 || response.statusCode == 206) {
+        IOSink ioSink;
+        if (response.statusCode == 206 && existingLength > 0) {
+          ioSink = tempFile.openWrite(mode: FileMode.append);
+        } else {
+          // Range unsupported by remote server fallback - restart download safely
+          ioSink = tempFile.openWrite(mode: FileMode.write);
+          existingLength = 0;
+        }
+
+        final int totalLength = (response.contentLength ?? 0) + existingLength;
+        int bytesDownloaded = existingLength;
+
+        await response.stream.listen(
+          (chunk) {
+            ioSink.add(chunk);
+            bytesDownloaded += chunk.length;
+          },
+          cancelOnError: true,
+        ).asFuture();
+
+        await ioSink.flush();
+        await ioSink.close();
+
+        // Check if the file matches specifications completely before applying to avoid crashes
+        if (bytesDownloaded > 0 && (response.contentLength == null || bytesDownloaded == totalLength)) {
+          if (finalFile.existsSync()) {
+            finalFile.deleteSync();
+          }
+          tempFile.renameSync(finalFile.path);
+
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(_keyLocalPath, finalFile.path);
+          return true;
+        } else {
+          return false;
+        }
+      } else {
+        return false;
+      }
+    } catch (e) {
+      debugPrint("Resilient range download runtime exception: $e");
+      return false;
+    }
+  }
+
+  static Future<void> clearCustomBackground() async {
+    final prefs = await SharedPreferences.getInstance();
+    final path = prefs.getString(_keyLocalPath);
+    if (path != null) {
+      final file = File(path);
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+    }
+    await prefs.remove(_keyActiveUrl);
+    await prefs.remove(_keyLocalPath);
+    await prefs.remove(_keyExpiry);
+    await prefs.remove(_keyStatus);
+    
+    try {
+      AppStateNotifier.scheduleRefreshNotifier.value = AppStateNotifier.scheduleRefreshNotifier.value + 1;
+    } catch (_) {}
+  }
+
+  static Future<Map<String, dynamic>?> getActiveCustomBackground() async {
+    final prefs = await SharedPreferences.getInstance();
+    final path = prefs.getString(_keyLocalPath);
+    final expiryStr = prefs.getString(_keyExpiry);
+
+    if (path == null || expiryStr == null) return null;
+
+    final expiry = DateTime.tryParse(expiryStr);
+    if (expiry == null || expiry.isBefore(DateTime.now())) {
+      await clearCustomBackground();
+      return null;
+    }
+
+    final file = File(path);
+    if (!file.existsSync()) return null;
+
+    return {
+      'path': path,
+      'expiry': expiry,
+    };
+  }
+}
 
 class MyHomePage extends StatefulWidget {
   final String title;
@@ -51,6 +259,10 @@ class _MyHomePageState extends State<MyHomePage> {
   Map<String, String> _todayAttendanceLog = {};
   double _attendancePercentage = 100.0;
 
+  // Remote custom background status indicators
+  String? _customBgImagePath;
+  Timer? _expiryCheckTimer;
+
   int _parseTimeStr(String timeStr) {
     try {
       timeStr = timeStr.trim().toUpperCase();
@@ -75,12 +287,18 @@ class _MyHomePageState extends State<MyHomePage> {
     _determineGreeting();
     _fetchDashboardContext();
     _loadAttendanceLogs();
+    _loadCustomBackground(); // Verify custom remote background status on runtime initialization
 
     // Properly chain the async setup so alarms don't try to sync before the plugin initializes
     _initNotificationsAndReminders();
     
     // Listen for schedule changes from ProfileScreen and CalendarScreen
     AppStateNotifier.scheduleRefreshNotifier.addListener(_onGlobalScheduleUpdate);
+
+    // Periodic schedule checker for active background validity updates
+    _expiryCheckTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
+      _checkBackgroundExpiration();
+    });
   }
 
   // Re-fetch local cache when the schedule has been updated across tabs
@@ -88,6 +306,29 @@ class _MyHomePageState extends State<MyHomePage> {
     if (mounted) {
       _fetchDashboardContext();
       _loadAttendanceLogs();
+      _loadCustomBackground(); // Instantly update active theme variations if background changes are hot-loaded
+    }
+  }
+
+  Future<void> _loadCustomBackground() async {
+    final customBg = await BackgroundCardBgService.getActiveCustomBackground();
+    if (mounted) {
+      setState(() {
+        _customBgImagePath = customBg?['path'];
+      });
+    }
+  }
+
+  Future<void> _checkBackgroundExpiration() async {
+    if (_customBgImagePath != null) {
+      final customBg = await BackgroundCardBgService.getActiveCustomBackground();
+      if (customBg == null) {
+        if (mounted) {
+          setState(() {
+            _customBgImagePath = null;
+          });
+        }
+      }
     }
   }
 
@@ -99,6 +340,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   void dispose() {
+    _expiryCheckTimer?.cancel();
     // Always unregister global listeners on memory disposal
     AppStateNotifier.scheduleRefreshNotifier.removeListener(_onGlobalScheduleUpdate);
     super.dispose();
@@ -275,7 +517,7 @@ class _MyHomePageState extends State<MyHomePage> {
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
-        _loadAttendanceLogs(); // 💡 Force dynamic percentage refresh after sync completion
+        _loadAttendanceLogs(); // Force dynamic percentage refresh after sync completion
       }
     }
   }
@@ -1562,18 +1804,31 @@ class _MyHomePageState extends State<MyHomePage> {
     final currentDay = now.day.toString().padLeft(2, '0');
     
     final isBirthday = dobString.length >= 10 && dobString.substring(5) == "$currentMonth-$currentDay";
-    final showCustomBackground = isBirthday; 
+
+    // Progressive Hierarchy:
+    // 1. Downloaded Custom Background via Silent Push Notifications (if available and not expired)
+    // 2. Local Custom Birthday Card Background (if active)
+    // 3. System Theme Gradient Color
+    DecorationImage? decorationImage;
+    bool hasCustomBg = _customBgImagePath != null && File(_customBgImagePath!).existsSync();
+
+    if (hasCustomBg) {
+      decorationImage = DecorationImage(
+        image: FileImage(File(_customBgImagePath!)),
+        fit: BoxFit.cover,
+      );
+    } else if (isBirthday) {
+      decorationImage = const DecorationImage(
+        image: AssetImage('assets/images/birthday_bg.png'),
+        fit: BoxFit.cover,
+      );
+    }
 
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        gradient: isBirthday ? null : systemExt.primaryGradient,
-        image: showCustomBackground
-            ? const DecorationImage(
-                image: AssetImage('assets/images/birthday_bg.png'),
-                fit: BoxFit.cover,
-              )
-            : null,
+        gradient: (hasCustomBg || isBirthday) ? null : systemExt.primaryGradient,
+        image: decorationImage,
         borderRadius: BorderRadius.circular(EduDesignTokens.radius3xl),
         boxShadow: systemExt.authCardShadow,
       ),
@@ -2069,11 +2324,11 @@ class _MyHomePageState extends State<MyHomePage> {
     } else if (status == 'missed') {
       iconMark = const Icon(Icons.cancel_rounded, size: 16, color: EduDesignTokens.rose700);
     } else if (status == 'holiday') {
-      textColor = const Color(0xFF0284C7); // 💡 Safe equivalent for sky600
+      textColor = const Color(0xFF0284C7); // Safe equivalent for sky600
       iconMark = Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
-          color: const Color(0xFFF0F9FF), // 💡 Safe equivalent for sky50
+          color: const Color(0xFFF0F9FF), // Safe equivalent for sky50
           borderRadius: BorderRadius.circular(4),
         ),
         child: const Text(
@@ -2131,7 +2386,7 @@ class _MyHomePageState extends State<MyHomePage> {
               status: targetStatus,
             );
             await _loadAttendanceLogs(); // Sync state on database write
-            // 💡 BUG FIX: scheduleRefreshNotifier is ValueNotifier<int>, increment to trigger redraws safely
+            // scheduleRefreshNotifier is ValueNotifier<int>, increment to trigger redraws safely
             AppStateNotifier.scheduleRefreshNotifier.value = AppStateNotifier.scheduleRefreshNotifier.value + 1;
           },
           behavior: HitTestBehavior.opaque,
@@ -2193,21 +2448,21 @@ class _MyHomePageState extends State<MyHomePage> {
             status: 'cancelled',
             icon: Icons.block_flipped,
             label: 'Cancelled',
-            activeColor: const Color(0xFFD97706), // 💡 Safe equivalent for amber600
-            activeBg: const Color(0xFFFEF3C7).withOpacity(0.15), // 💡 Safe equivalent for amber50
+            activeColor: const Color(0xFFD97706), // Safe equivalent for amber600
+            activeBg: const Color(0xFFFEF3C7).withOpacity(0.15), // Safe equivalent for amber50
           ),
           buildStatusItem(
             status: 'holiday',
             icon: Icons.beach_access_rounded,
             label: 'Holiday',
-            activeColor: const Color(0xFF0284C7), // 💡 Safe equivalent for sky600
-            activeBg: const Color(0xFFF0F9FF).withOpacity(0.15), // 💡 Safe equivalent for sky50
+            activeColor: const Color(0xFF0284C7), // Safe equivalent for sky600
+            activeBg: const Color(0xFFF0F9FF).withOpacity(0.15), // Safe equivalent for sky50
           ),
           buildStatusItem(
             status: 'none',
             icon: Icons.refresh_rounded,
             label: 'Reset',
-            activeColor: const Color(0xFF475569), // 💡 Safe equivalent for slate600
+            activeColor: const Color(0xFF475569), // Safe equivalent for slate600
             activeBg: EduDesignTokens.slate100.withOpacity(0.15),
           ),
         ],
@@ -2516,6 +2771,7 @@ class _MyHomePageState extends State<MyHomePage> {
       onRefresh: () async {
         await _fetchDashboardContext();
         await _loadAttendanceLogs();
+        await _loadCustomBackground();
       },
       color: Theme.of(context).primaryColor,
       backgroundColor: Theme.of(context).cardColor,
