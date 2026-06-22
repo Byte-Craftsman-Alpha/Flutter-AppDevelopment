@@ -139,10 +139,12 @@ def send_card_background_update(
 
 # print("Push notification function is ready to use!")
 # send_push_notification("Hello from FastAPI!", "This is a test notification.", "your_device_token_here")
-# print(broadcast_notification("A test notification", "How is you day man??", 'general'))
+# print(broadcast_notification("Happy B'day", "happy B'day wishes from Team Paradox.", '2514670010038'))
+# print(broadcast_notification("Your CP Reminder", "You have a new contest on LeetCode toay at 8am, don't forget to join it.", '2514670010038'))
+
 # Wipes off and reverts to default after 10800 seconds (3 hours)
-send_card_background_update(
-    image_url="https://imgs.search.brave.com/HRxptjCm63gNvAzaUoMMvc9IIPkn1y6D7BktbxHxUKw/rs:fit:860:0:0:0/g:ce/aHR0cHM6Ly9zdGF0/aWMudmVjdGVlenku/Y29tL3N5c3RlbS9y/ZXNvdXJjZXMvdGh1/bWJuYWlscy8wMDYv/OTI5LzY4Mi9zbWFs/bC9hYnN0cmFjdC1i/YWNrZ3JvdW5kLWJv/a2VoLWNpcmNsZS1s/aWdodC1vcmFuZ2Ut/YWJzdHJhY3Qtb3Jh/bmdlLWVmZmVjdC1i/YWNrZ3JvdW5kLWxp/Z2h0LW9yYW5nZS1h/YnN0cmFjdC1iYWNr/Z3JvdW5kLWZyZWUt/cGhvdG8uanBn",
-    expiry_time="10", # 3 hours in seconds
-    topic="general"
-)
+# send_card_background_update(
+#     image_url="https://imgs.search.brave.com/HRxptjCm63gNvAzaUoMMvc9IIPkn1y6D7BktbxHxUKw/rs:fit:860:0:0:0/g:ce/aHR0cHM6Ly9zdGF0/aWMudmVjdGVlenku/Y29tL3N5c3RlbS9y/ZXNvdXJjZXMvdGh1/bWJuYWlscy8wMDYv/OTI5LzY4Mi9zbWFs/bC9hYnN0cmFjdC1i/YWNrZ3JvdW5kLWJv/a2VoLWNpcmNsZS1s/aWdodC1vcmFuZ2Ut/YWJzdHJhY3Qtb3Jh/bmdlLWVmZmVjdC1i/YWNrZ3JvdW5kLWxp/Z2h0LW9yYW5nZS1h/YnN0cmFjdC1iYWNr/Z3JvdW5kLWZyZWUt/cGhvdG8uanBn",
+#     expiry_time="10", # 3 hours in seconds
+#     topic="2514670010038"
+# )
