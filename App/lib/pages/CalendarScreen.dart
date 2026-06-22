@@ -5,7 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intl/intl.dart';
 import '../services/auth_service.dart';
+import '../services/attendance_db_service.dart';
 import '../constants/theme.dart';
 
 // 💡 High Performance Top-Level Isolation Parsers.
@@ -23,7 +25,7 @@ class CalendarScreen extends StatefulWidget {
 }
 
 class _CalendarScreenState extends State<CalendarScreen> {
-  final PageController _pageController = PageController();
+  late final PageController _pageController;
   int _activeDayIndex = 0;
   bool _isLoading = false;
   String? _errorMessage;
@@ -41,19 +43,44 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   final Map<String, List<Map<String, dynamic>>> _monthlyEvents = {};
 
+  // 💡 Memory map tracking for the selected active week -> (date -> (time|subject -> status))
+  Map<String, Map<String, String>> _weeklyAttendanceLog = {};
+
   @override
   void initState() {
     super.initState();
     _currentMonthDate = DateTime.now();
+
+    final weekdayIndex = DateTime.now().weekday;
+    if (weekdayIndex >= 1 && weekdayIndex <= 6) {
+      _activeDayIndex = weekdayIndex - 1;
+    } else {
+      _activeDayIndex = 0; // default to Monday if today is Sunday
+    }
+    _pageController = PageController(initialPage: _activeDayIndex);
+
     _loadInitialSubscriptionAndData();
     
     // 💡 Listen for schedule changes from ProfileScreen to instantly redraw 
     AppStateNotifier.scheduleRefreshNotifier.addListener(_onGlobalScheduleUpdate);
   }
 
-  void _onGlobalScheduleUpdate() {
+  Future<void> _onGlobalScheduleUpdate() async {
     if (mounted) {
-      _checkAndResetFocus(forceSync: true);
+      final sub = await AuthService.getSubscribedSchedule();
+      final latestSub = (sub != null && sub.isNotEmpty) ? sub : null;
+      
+      if (latestSub != _currentSubscription) {
+        // Section subscription changed, refresh entire schedule view
+        setState(() {
+          _currentSubscription = latestSub;
+        });
+        await _loadAttendanceLogs();
+        _initializeScheduleAndCalendar(latestSub, forceSync: true);
+      } else {
+        // silenty refresh local logs without modifying page layout index
+        await _loadAttendanceLogs();
+      }
     }
   }
 
@@ -74,7 +101,26 @@ class _CalendarScreenState extends State<CalendarScreen> {
         _currentSubscription = validSub;
       });
     }
+    await _loadAttendanceLogs(); // Load DB tracker state before compiling UI list
     _initializeScheduleAndCalendar(validSub);
+  }
+
+  /// Safely resolves the exact Gregorian date for each relative day index of the active school week.
+  DateTime _getDateOfThisWeek(int weekdayIndex) {
+    final now = DateTime.now();
+    // Find Monday of the current week (weekday range: 1 - 7)
+    final monday = now.subtract(Duration(days: now.weekday - 1));
+    return monday.add(Duration(days: weekdayIndex));
+  }
+
+  Future<void> _loadAttendanceLogs() async {
+    final List<String> weekDates = List.generate(6, (idx) => _formatDateToKey(_getDateOfThisWeek(idx)));
+    final logs = await AttendanceDbService.getWeeklyAttendance(weekDates);
+    if (mounted) {
+      setState(() {
+        _weeklyAttendanceLog = logs;
+      });
+    }
   }
 
   String _formatDateToKey(DateTime date) {
@@ -102,7 +148,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   Future<void> _checkAndResetFocus({bool forceSync = false}) async {
-    _resetToToday();
     final sub = await AuthService.getSubscribedSchedule();
     final latestSub = (sub != null && sub.isNotEmpty) ? sub : null;
     
@@ -114,6 +159,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       }
     }
     
+    await _loadAttendanceLogs(); // Sync local states
     _initializeScheduleAndCalendar(latestSub, forceSync: forceSync);
   }
 
@@ -198,19 +244,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
       for (var dayKey in _dailyClasses.keys) {
         _dailyClasses[dayKey]!.sort((a, b) => (a['time'] ?? '').toString().compareTo((b['time'] ?? '').toString()));
       }
-
-      final weekdayIndex = DateTime.now().weekday;
-      int targetPage = 0;
-      if (weekdayIndex >= 1 && weekdayIndex <= 6) {
-        targetPage = weekdayIndex - 1;
-      }
-      _activeDayIndex = targetPage;
-    });
-    
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_pageController.hasClients) {
-        _pageController.jumpToPage(_activeDayIndex);
-      }
+      // 💡 UX PATCH: Removed the _activeDayIndex overwrite and jumpToPage triggers here.
+      // This completely stops the day selector from resetting focus during background changes.
     });
   }
 
@@ -420,7 +455,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     if (classes.isEmpty)
                       Padding(padding: const EdgeInsets.symmetric(vertical: 16.0), child: Center(child: Text('No classes scheduled for this day.', style: textTheme.bodyMedium)))
                     else
-                      ...classes.map((classData) => _buildDetailClassItemCard(classData)),
+                      ...classes.map((classData) => _buildDetailClassItemCard(classData, clickedDate)),
                     const SizedBox(height: 24),
                     Text('Special / Holidays', style: textTheme.titleMedium),
                     const SizedBox(height: 12),
@@ -472,50 +507,257 @@ class _CalendarScreenState extends State<CalendarScreen> {
     } catch (_) { return false; }
   }
 
-  Widget _buildDetailClassItemCard(Map<String, dynamic> classData) {
+  Widget _buildSubjectHeader(String subject, String status, TextStyle? baseStyle) {
+    TextDecoration? decoration;
+    Color? textColor = baseStyle?.color;
+    Widget? iconMark;
+
+    if (status == 'cancelled') {
+      decoration = TextDecoration.lineThrough;
+      textColor = EduDesignTokens.slate400;
+      iconMark = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: EduDesignTokens.slate100.withOpacity(0.2),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: const Text(
+          'CANCELLED',
+          style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: EduDesignTokens.slate400),
+        ),
+      );
+    } else if (status == 'attended') {
+      iconMark = const Icon(Icons.check_circle_rounded, size: 16, color: EduDesignTokens.emerald500);
+    } else if (status == 'missed') {
+      iconMark = const Icon(Icons.cancel_rounded, size: 16, color: EduDesignTokens.rose700);
+    } else if (status == 'holiday') {
+      textColor = const Color(0xFF0284C7); // 💡 Safe equivalent for sky600
+      iconMark = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF0F9FF), // 💡 Safe equivalent for sky50
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: const Text(
+          'HOLIDAY',
+          style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Color(0xFF0284C7)),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            subject,
+            style: baseStyle?.copyWith(
+              decoration: decoration,
+              color: textColor,
+              fontStyle: status == 'holiday' ? FontStyle.italic : FontStyle.normal,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (iconMark != null) ...[
+          const SizedBox(width: 8),
+          iconMark,
+        ],
+      ],
+    );
+  }
+
+  /// Builds a symmetric control bar to let users easily log class status.
+  Widget _buildAttendanceActionBar(Map<String, dynamic> classData, DateTime date, String currentStatus) {
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+    final rawTime = classData['time'] ?? '10:00 - 11:00';
+    final subject = classData['subject'] ?? 'Unspecified Subject';
+    final dateKey = _formatDateToKey(date);
+
+    Widget buildStatusItem({
+      required String status,
+      required IconData icon,
+      required String label,
+      required Color activeColor,
+      required Color activeBg,
+    }) {
+      final bool isSelected = currentStatus == status;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () async {
+            final targetStatus = isSelected ? 'none' : status;
+            await AttendanceDbService.logAttendance(
+              date: dateKey,
+              timeSlot: rawTime.toString(),
+              subject: subject,
+              status: targetStatus,
+            );
+            await _loadAttendanceLogs(); // Force reload the tracking state matrix
+            // 💡 BUG FIX: scheduleRefreshNotifier is ValueNotifier<int>, increment to trigger redraws safely
+            AppStateNotifier.scheduleRefreshNotifier.value = AppStateNotifier.scheduleRefreshNotifier.value + 1;
+          },
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            decoration: BoxDecoration(
+              color: isSelected ? activeBg : Colors.transparent,
+              borderRadius: BorderRadius.circular(EduDesignTokens.radiusM),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 14,
+                  color: isSelected ? activeColor : EduDesignTokens.slate500,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 8,
+                    fontWeight: FontWeight.bold,
+                    color: isSelected ? activeColor : EduDesignTokens.slate500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: systemExt.btnSoftBg.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+        border: Border.all(color: systemExt.borderNeutral.withOpacity(0.5)),
+      ),
+      child: Row(
+        children: [
+          buildStatusItem(
+            status: 'attended',
+            icon: Icons.check_circle_rounded,
+            label: 'Attended',
+            activeColor: EduDesignTokens.emerald600,
+            activeBg: EduDesignTokens.emerald50.withOpacity(0.15),
+          ),
+          buildStatusItem(
+            status: 'missed',
+            icon: Icons.cancel_rounded,
+            label: 'Missed',
+            activeColor: EduDesignTokens.rose700,
+            activeBg: EduDesignTokens.rose50.withOpacity(0.15),
+          ),
+          buildStatusItem(
+            status: 'cancelled',
+            icon: Icons.block_flipped,
+            label: 'Cancelled',
+            activeColor: const Color(0xFFD97706), // 💡 Safe equivalent for amber600
+            activeBg: const Color(0xFFFEF3C7).withOpacity(0.15), // 💡 Safe equivalent for amber50
+          ),
+          buildStatusItem(
+            status: 'holiday',
+            icon: Icons.beach_access_rounded,
+            label: 'Holiday',
+            activeColor: const Color(0xFF0284C7), // 💡 Safe equivalent for sky600
+            activeBg: const Color(0xFFF0F9FF).withOpacity(0.15), // 💡 Safe equivalent for sky50
+          ),
+          buildStatusItem(
+            status: 'none',
+            icon: Icons.refresh_rounded,
+            label: 'Reset',
+            activeColor: const Color(0xFF475569), // 💡 Safe equivalent for slate600
+            activeBg: EduDesignTokens.slate100.withOpacity(0.15),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailClassItemCard(Map<String, dynamic> classData, DateTime date) {
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
     final textTheme = Theme.of(context).textTheme;
     final rawTime = classData['time'] ?? '10:00 - 11:00';
     final isOngoing = _isClassOngoing(classData['day']?.toString() ?? '', rawTime.toString());
 
+    // Pull attendance logging state for this particular session on this date
+    final String currentStatus = _weeklyAttendanceLog[_formatDateToKey(date)]?["${rawTime}|${classData['subject']}"] ?? 'none';
+
+    Color? borderColor;
+    Color? cardBgColor = Theme.of(context).cardColor;
+    double borderWidth = 1.5;
+
+    if (isOngoing) {
+      borderColor = systemExt.borderFocus;
+      borderWidth = 2.0;
+      cardBgColor = EduDesignTokens.indigo50.withOpacity(0.15);
+    } else if (currentStatus == 'attended') {
+      borderColor = EduDesignTokens.emerald500.withOpacity(0.4);
+    } else if (currentStatus == 'missed') {
+      borderColor = EduDesignTokens.rose700.withOpacity(0.4);
+    } else if (currentStatus == 'cancelled') {
+      borderColor = EduDesignTokens.slate300.withOpacity(0.4);
+      cardBgColor = Theme.of(context).cardColor.withOpacity(0.6);
+    } else if (currentStatus == 'holiday') {
+      borderColor = EduDesignTokens.sky500.withOpacity(0.4);
+    } else {
+      borderColor = systemExt.borderNeutral;
+    }
+
     return Container(
+      key: ValueKey("${_formatDateToKey(date)}_${rawTime}_${classData['subject']}"),
       margin: const EdgeInsets.only(bottom: 12.0),
       padding: const EdgeInsets.all(16.0),
       decoration: BoxDecoration(
-        color: isOngoing ? EduDesignTokens.indigo50.withOpacity(0.15) : Theme.of(context).cardColor,
+        color: cardBgColor,
         borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
-        border: Border.all(color: isOngoing ? systemExt.borderFocus : systemExt.borderNeutral, width: isOngoing ? 2.0 : 1.5),
+        border: Border.all(color: borderColor, width: borderWidth),
         boxShadow: isOngoing ? systemExt.cardHoverShadow : systemExt.cardBaseShadow,
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(classData['subject'] ?? 'Unspecified Subject', style: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold, height: 1.3, fontSize: 14)),
-                const SizedBox(height: 6),
-                Row(
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    EduComponents.icon(context: context, iconData: EduIcons.chevronRight, size: 14, color: EduDesignTokens.slate400),
-                    const SizedBox(width: 4),
-                    Expanded(child: Text("${classData['room'] ?? 'TBA'}  ·  ${classData['teacher'] ?? 'Unknown Faculty'}", style: textTheme.bodyMedium?.copyWith(fontSize: 12, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    _buildSubjectHeader(
+                      classData['subject'] ?? 'Unspecified Subject',
+                      currentStatus,
+                      textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold, height: 1.3, fontSize: 14),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        EduComponents.icon(context: context, iconData: EduIcons.chevronRight, size: 14, color: EduDesignTokens.slate400),
+                        const SizedBox(width: 4),
+                        Expanded(child: Text("${classData['room'] ?? 'TBA'}  ·  ${classData['teacher'] ?? 'Unknown Faculty'}", style: textTheme.bodyMedium?.copyWith(fontSize: 12, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                      ],
+                    ),
                   ],
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                constraints: const BoxConstraints(minWidth: 100),
+                decoration: BoxDecoration(
+                  color: isOngoing ? EduDesignTokens.indigo50.withOpacity(0.8) : systemExt.btnSoftBg,
+                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+                  border: Border.all(color: isOngoing ? EduDesignTokens.indigo500.withOpacity(0.2) : systemExt.btnSoftBorder),
+                ),
+                child: Text(_convertTo12HourRange(rawTime.toString()).replaceAll(' - ', '\n'), textAlign: TextAlign.center, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: isOngoing ? EduDesignTokens.indigo700 : systemExt.btnSoftText, height: 1.3)),
+              ),
+            ],
           ),
-          const SizedBox(width: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            constraints: const BoxConstraints(minWidth: 100),
-            decoration: BoxDecoration(
-              color: isOngoing ? EduDesignTokens.indigo50.withOpacity(0.8) : systemExt.btnSoftBg,
-              borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
-              border: Border.all(color: isOngoing ? EduDesignTokens.indigo500.withOpacity(0.2) : systemExt.btnSoftBorder),
-            ),
-            child: Text(_convertTo12HourRange(rawTime.toString()).replaceAll(' - ', '\n'), textAlign: TextAlign.center, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: isOngoing ? EduDesignTokens.indigo700 : systemExt.btnSoftText, height: 1.3)),
-          ),
+          
+          // Symmetrical Interactive Hub Strip
+          _buildAttendanceActionBar(classData, date, currentStatus),
         ],
       ),
     );
@@ -565,10 +807,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
           child: RefreshIndicator(
             color: Theme.of(context).primaryColor,
             onRefresh: () async {
-              _resetToToday();
               final sub = await AuthService.getSubscribedSchedule();
               final validSub = (sub != null && sub.isNotEmpty) ? sub : null;
               if (mounted) { setState(() { _currentSubscription = validSub; }); }
+              await _loadAttendanceLogs(); // Reload local logs
               await _syncAllLiveRecords(validSub, isManualRefresh: true);
             },
             child: CustomScrollView(
@@ -739,7 +981,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
             ),
             const Divider(height: 24, thickness: 1),
             SizedBox(
-              height: 360,
+              height: 420, // 💡 Slightly height expanded to offer zero viewport-clipping
               child: PageView.builder(
                 controller: _pageController,
                 itemCount: _dbDayKeys.length,
@@ -747,7 +989,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 itemBuilder: (context, dayIndex) => DayClassesListKeepAlive(
                   dayShort: _dayShortNames[dayIndex],
                   classesList: _dailyClasses[_dbDayKeys[dayIndex]] ?? [],
-                  cardBuilder: (classData) => _buildDetailClassItemCard(classData),
+                  cardBuilder: (classData) => _buildDetailClassItemCard(classData, _getDateOfThisWeek(dayIndex)),
                 ),
               ),
             ),

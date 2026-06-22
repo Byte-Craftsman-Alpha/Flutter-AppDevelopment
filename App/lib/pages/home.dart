@@ -18,6 +18,7 @@ import 'package:timezone/timezone.dart' as tz;
 import '../constants/theme.dart';
 import '../services/auth_service.dart';
 import '../services/crypto_service.dart';
+import '../services/attendance_db_service.dart';
 
 import 'ChatScreen.dart';
 import 'CalendarScreen.dart';
@@ -42,10 +43,13 @@ class _MyHomePageState extends State<MyHomePage> {
   List<Map<String, dynamic>> _todayEvents = [];
   List<Map<String, dynamic>> _recentVaultItems = [];
 
-  // 💡 To-Do Reminders State
+  // To-Do Reminders State
   List<Map<String, dynamic>> _reminders = [];
-  final FlutterLocalNotificationsPlugin _localNotif =
-      FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin _localNotif = FlutterLocalNotificationsPlugin();
+
+  // Attendance Tracker Cache State parameters
+  Map<String, String> _todayAttendanceLog = {};
+  double _attendancePercentage = 100.0;
 
   int _parseTimeStr(String timeStr) {
     try {
@@ -70,11 +74,12 @@ class _MyHomePageState extends State<MyHomePage> {
     tz.initializeTimeZones(); // Initialize timezone DB for background alarms
     _determineGreeting();
     _fetchDashboardContext();
+    _loadAttendanceLogs();
 
-    // 💡 Properly chain the async setup so alarms don't try to sync before the plugin initializes
+    // Properly chain the async setup so alarms don't try to sync before the plugin initializes
     _initNotificationsAndReminders();
     
-    // 💡 Listen for schedule changes from ProfileScreen
+    // Listen for schedule changes from ProfileScreen and CalendarScreen
     AppStateNotifier.scheduleRefreshNotifier.addListener(_onGlobalScheduleUpdate);
   }
 
@@ -82,6 +87,7 @@ class _MyHomePageState extends State<MyHomePage> {
   void _onGlobalScheduleUpdate() {
     if (mounted) {
       _fetchDashboardContext();
+      _loadAttendanceLogs();
     }
   }
 
@@ -93,7 +99,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   void dispose() {
-    // 💡 Always unregister global listeners on memory disposal
+    // Always unregister global listeners on memory disposal
     AppStateNotifier.scheduleRefreshNotifier.removeListener(_onGlobalScheduleUpdate);
     super.dispose();
   }
@@ -106,6 +112,22 @@ class _MyHomePageState extends State<MyHomePage> {
       _greeting = 'Good Afternoon';
     } else {
       _greeting = 'Good Evening';
+    }
+  }
+
+  String _formatDateToKey(DateTime date) {
+    return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
+  }
+
+  Future<void> _loadAttendanceLogs() async {
+    final dateKey = _formatDateToKey(DateTime.now());
+    final logs = await AttendanceDbService.getDateAttendance(dateKey);
+    final percentage = await AttendanceDbService.calculateAttendancePercentage();
+    if (mounted) {
+      setState(() {
+        _todayAttendanceLog = logs;
+        _attendancePercentage = percentage;
+      });
     }
   }
 
@@ -243,7 +265,7 @@ class _MyHomePageState extends State<MyHomePage> {
             .toList();
       }
     } catch (e) {
-      debugPrint("❌ Dashboard Sync Error: $e");
+      debugPrint("⚠️ Dashboard Sync Error: $e");
       if (mounted) {
         setState(() => _hasSyncError = true);
         _showErrorSnackBar(
@@ -251,7 +273,10 @@ class _MyHomePageState extends State<MyHomePage> {
         );
       }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _loadAttendanceLogs(); // 💡 Force dynamic percentage refresh after sync completion
+      }
     }
   }
 
@@ -1557,7 +1582,7 @@ class _MyHomePageState extends State<MyHomePage> {
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Column(
@@ -1586,22 +1611,29 @@ class _MyHomePageState extends State<MyHomePage> {
                   ],
                 ),
               ),
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
-                  border: Border.all(color: Colors.white.withOpacity(0.4)),
-                ),
-                child: Center(
-                  child: SolarIcon(
-                    isBirthday ? SolarIcons.Gift : SolarIcons.User,
-                    weight: SolarIconWeight.bold,
-                    color: Colors.white,
-                    size: 28,
+              
+              Row(
+                children: [
+                  _buildAttendanceRingGauge(),
+                  const SizedBox(width: 12),
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+                      border: Border.all(color: Colors.white.withOpacity(0.4)),
+                    ),
+                    child: Center(
+                      child: SolarIcon(
+                        isBirthday ? SolarIcons.Gift : SolarIcons.User,
+                        weight: SolarIconWeight.bold,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
             ],
           ),
@@ -1630,6 +1662,59 @@ class _MyHomePageState extends State<MyHomePage> {
                 _buildIdentityMetric('SEMESTER', semester),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAttendanceRingGauge() {
+    final bool isLowAttendance = _attendancePercentage < 75.0;
+    final color = isLowAttendance ? EduDesignTokens.rose100 : Colors.white;
+    final trackColor = Colors.white.withOpacity(0.15);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+        border: Border.all(color: Colors.white.withOpacity(0.2)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              value: _attendancePercentage / 100.0,
+              strokeWidth: 3.5,
+              backgroundColor: trackColor,
+              valueColor: AlwaysStoppedAnimation<Color>(color),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                "${_attendancePercentage.toStringAsFixed(1)}%",
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+              Text(
+                isLowAttendance ? "Low Attendance" : "On Track",
+                style: TextStyle(
+                  fontSize: 8,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white.withOpacity(0.7),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1875,7 +1960,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  // 💡 NEW COMPONENT: Independent Dedicated Tile For Events
+  // To-Do Reminders State: Independent Dedicated Tile For Events
   Widget _buildTodayEventTile() {
     if (_todayEvents.isEmpty) return const SizedBox.shrink(); // Hide entirely if no events
 
@@ -1959,6 +2044,177 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// Custom decorator that formats the title based on the active tracking state on home screen.
+  Widget _buildSubjectHeader(String subject, String status, TextStyle? baseStyle) {
+    TextDecoration? decoration;
+    Color? textColor = baseStyle?.color;
+    Widget? iconMark;
+
+    if (status == 'cancelled') {
+      decoration = TextDecoration.lineThrough;
+      textColor = EduDesignTokens.slate400;
+      iconMark = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: EduDesignTokens.slate100.withOpacity(0.2),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: const Text(
+          'CANCELLED',
+          style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: EduDesignTokens.slate400),
+        ),
+      );
+    } else if (status == 'attended') {
+      iconMark = const Icon(Icons.check_circle_rounded, size: 16, color: EduDesignTokens.emerald500);
+    } else if (status == 'missed') {
+      iconMark = const Icon(Icons.cancel_rounded, size: 16, color: EduDesignTokens.rose700);
+    } else if (status == 'holiday') {
+      textColor = const Color(0xFF0284C7); // 💡 Safe equivalent for sky600
+      iconMark = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF0F9FF), // 💡 Safe equivalent for sky50
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: const Text(
+          'HOLIDAY',
+          style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Color(0xFF0284C7)),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            subject,
+            style: baseStyle?.copyWith(
+              decoration: decoration,
+              color: textColor,
+              fontStyle: status == 'holiday' ? FontStyle.italic : FontStyle.normal,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (iconMark != null) ...[
+          const SizedBox(width: 8),
+          iconMark,
+        ],
+      ],
+    );
+  }
+
+  /// Symmetrical quick-logger built for inline interaction on the home tab.
+  Widget _buildAttendanceActionBar(Map<String, dynamic> classData, String currentStatus) {
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+    final rawTime = classData['time'] ?? '10:00 - 11:00';
+    final subject = classData['subject'] ?? 'Unspecified Subject';
+    final dateKey = _formatDateToKey(DateTime.now());
+
+    Widget buildStatusItem({
+      required String status,
+      required IconData icon,
+      required String label,
+      required Color activeColor,
+      required Color activeBg,
+    }) {
+      final bool isSelected = currentStatus == status;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () async {
+            final targetStatus = isSelected ? 'none' : status;
+            await AttendanceDbService.logAttendance(
+              date: dateKey,
+              timeSlot: rawTime.toString(),
+              subject: subject,
+              status: targetStatus,
+            );
+            await _loadAttendanceLogs(); // Sync state on database write
+            // 💡 BUG FIX: scheduleRefreshNotifier is ValueNotifier<int>, increment to trigger redraws safely
+            AppStateNotifier.scheduleRefreshNotifier.value = AppStateNotifier.scheduleRefreshNotifier.value + 1;
+          },
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            decoration: BoxDecoration(
+              color: isSelected ? activeBg : Colors.transparent,
+              borderRadius: BorderRadius.circular(EduDesignTokens.radiusM),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 14,
+                  color: isSelected ? activeColor : EduDesignTokens.slate500,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 8,
+                    fontWeight: FontWeight.bold,
+                    color: isSelected ? activeColor : EduDesignTokens.slate500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: systemExt.btnSoftBg.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+        border: Border.all(color: systemExt.borderNeutral.withOpacity(0.5)),
+      ),
+      child: Row(
+        children: [
+          buildStatusItem(
+            status: 'attended',
+            icon: Icons.check_circle_rounded,
+            label: 'Attended',
+            activeColor: EduDesignTokens.emerald600,
+            activeBg: EduDesignTokens.emerald50.withOpacity(0.15),
+          ),
+          buildStatusItem(
+            status: 'missed',
+            icon: Icons.cancel_rounded,
+            label: 'Missed',
+            activeColor: EduDesignTokens.rose700,
+            activeBg: EduDesignTokens.rose50.withOpacity(0.15),
+          ),
+          buildStatusItem(
+            status: 'cancelled',
+            icon: Icons.block_flipped,
+            label: 'Cancelled',
+            activeColor: const Color(0xFFD97706), // 💡 Safe equivalent for amber600
+            activeBg: const Color(0xFFFEF3C7).withOpacity(0.15), // 💡 Safe equivalent for amber50
+          ),
+          buildStatusItem(
+            status: 'holiday',
+            icon: Icons.beach_access_rounded,
+            label: 'Holiday',
+            activeColor: const Color(0xFF0284C7), // 💡 Safe equivalent for sky600
+            activeBg: const Color(0xFFF0F9FF).withOpacity(0.15), // 💡 Safe equivalent for sky50
+          ),
+          buildStatusItem(
+            status: 'none',
+            icon: Icons.refresh_rounded,
+            label: 'Reset',
+            activeColor: const Color(0xFF475569), // 💡 Safe equivalent for slate600
+            activeBg: EduDesignTokens.slate100.withOpacity(0.15),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTodaySchedule() {
     final theme = Theme.of(context);
     final systemExt = theme.extension<EduPortalThemeExtension>()!;
@@ -2012,109 +2268,137 @@ class _MyHomePageState extends State<MyHomePage> {
             currentMinutes >= startMinutes && currentMinutes <= endMinutes;
       }
 
+      // Read status from today's memory logger map
+      final String currentStatus = _todayAttendanceLog["${rawTime}|${subject}"] ?? 'none';
+
+      Color? borderColor;
+      Color? cardBgColor = Colors.transparent;
+      double borderWidth = 1.5;
+
+      if (isOngoing) {
+        borderColor = systemExt.borderFocus;
+        borderWidth = 2.0;
+        cardBgColor = EduDesignTokens.indigo50.withOpacity(0.15);
+      } else if (currentStatus == 'attended') {
+        borderColor = EduDesignTokens.emerald500.withOpacity(0.4);
+      } else if (currentStatus == 'missed') {
+        borderColor = EduDesignTokens.rose700.withOpacity(0.4);
+      } else if (currentStatus == 'cancelled') {
+        borderColor = EduDesignTokens.slate300.withOpacity(0.4);
+        cardBgColor = theme.cardColor.withOpacity(0.6);
+      } else if (currentStatus == 'holiday') {
+        borderColor = EduDesignTokens.sky500.withOpacity(0.4);
+      }
+
       scheduleWidgets.add(
         Container(
+          key: ValueKey("${_formatDateToKey(DateTime.now())}_${rawTime}_$subject"),
           margin: const EdgeInsets.only(bottom: 12),
           child: EduComponents.card(
             context: context,
             child: Container(
               decoration: BoxDecoration(
-                color: isOngoing
-                    ? EduDesignTokens.indigo50.withOpacity(0.15)
-                    : Colors.transparent,
+                color: cardBgColor,
                 borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
-                border: isOngoing
-                    ? Border.all(color: systemExt.borderFocus, width: 2.0)
+                border: borderColor != null
+                    ? Border.all(color: borderColor, width: borderWidth)
                     : null,
               ),
               padding: const EdgeInsets.all(16),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isOngoing
-                          ? EduDesignTokens.indigo50.withOpacity(0.8)
-                          : systemExt.btnSoftBg,
-                      borderRadius: BorderRadius.circular(
-                        EduDesignTokens.radiusXl,
-                      ),
-                      border: Border.all(
-                        color: isOngoing
-                            ? EduDesignTokens.indigo500.withOpacity(0.2)
-                            : systemExt.btnSoftBorder,
-                      ),
-                    ),
-                    child: Text(
-                      rawTime.toString().replaceAll(' - ', '\n'),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: isOngoing
-                            ? EduDesignTokens.indigo700
-                            : systemExt.btnSoftText,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          subject,
-                          style: theme.textTheme.bodyLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isOngoing
+                              ? EduDesignTokens.indigo50.withOpacity(0.8)
+                              : systemExt.btnSoftBg,
+                          borderRadius: BorderRadius.circular(
+                            EduDesignTokens.radiusXl,
+                          ),
+                          border: Border.all(
+                            color: isOngoing
+                                ? EduDesignTokens.indigo500.withOpacity(0.2)
+                                : systemExt.btnSoftBorder,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Row(
+                        child: Text(
+                          rawTime.toString().replaceAll(' - ', '\n'),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: isOngoing
+                                ? EduDesignTokens.indigo700
+                                : systemExt.btnSoftText,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const SolarIcon(
-                              SolarIcons.MapPoint,
-                              size: 14,
-                              color: EduDesignTokens.slate400,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              "Room $room",
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                fontSize: 12,
+                            _buildSubjectHeader(
+                              subject,
+                              currentStatus,
+                              theme.textTheme.bodyLarge?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
                               ),
                             ),
-                            if (isOngoing) ...[
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 2,
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                const SolarIcon(
+                                  SolarIcons.MapPoint,
+                                  size: 14,
+                                  color: EduDesignTokens.slate400,
                                 ),
-                                decoration: BoxDecoration(
-                                  color: EduDesignTokens.emerald500.withOpacity(
-                                    0.2,
-                                  ),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: const Text(
-                                  "ONGOING",
-                                  style: TextStyle(
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.bold,
-                                    color: EduDesignTokens.emerald700,
+                                const SizedBox(width: 4),
+                                Text(
+                                  "Room $room",
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    fontSize: 12,
                                   ),
                                 ),
-                              ),
-                            ],
+                                if (isOngoing) ...[
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: EduDesignTokens.emerald500.withOpacity(
+                                        0.2,
+                                      ),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: const Text(
+                                      "ONGOING",
+                                      style: TextStyle(
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.bold,
+                                        color: EduDesignTokens.emerald700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
                           ],
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
+                  _buildAttendanceActionBar(classData, currentStatus),
                 ],
               ),
             ),
@@ -2202,7 +2486,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 overflow: TextOverflow.ellipsis,
               ),
               subtitle: Text(
-                '$extension · $sizeKb KB',
+                '$extension • $sizeKb KB',
                 style: theme.textTheme.bodyMedium?.copyWith(fontSize: 11),
               ),
               trailing: EduComponents.icon(
@@ -2229,7 +2513,10 @@ class _MyHomePageState extends State<MyHomePage> {
     final textTheme = Theme.of(context).textTheme;
 
     return RefreshIndicator(
-      onRefresh: _fetchDashboardContext,
+      onRefresh: () async {
+        await _fetchDashboardContext();
+        await _loadAttendanceLogs();
+      },
       color: Theme.of(context).primaryColor,
       backgroundColor: Theme.of(context).cardColor,
       child: _isLoading
