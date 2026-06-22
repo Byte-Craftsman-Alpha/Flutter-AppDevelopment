@@ -3,12 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'constants/design_system.dart'; 
 import 'services/auth_wrapper.dart';
 import 'services/auth_service.dart';
 import 'constants/theme.dart'; 
+import 'pages/home.dart'; // 💡 IMPORT MYHOMEPAGE TO ACCESS BACKGROUND SERVICES
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -41,6 +41,13 @@ Future<void> unsubscribeFromAllTopics() async {
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
   
+  // 💡 SILENT NOTIFICATION ROUTING CHECK (BACKGROUND STATE)
+  // If the push message contains card background updating data, execute it directly and exit.
+  if (message.data.containsKey('image_url')) {
+    await BackgroundCardBgService.processSilentNotification(message.data);
+    return; // Prevent triggering any noisy generic notification alerts!
+  }
+
   const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
   const InitializationSettings initSettings = InitializationSettings(android: androidSettings);
   
@@ -58,8 +65,6 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   
   await flutterLocalNotificationsPlugin.show(
     id: message.hashCode,
-    // 💡 BUG FIX: Reading from `message.notification` because the backend 
-    // is sending a standard notification block, not just a data dictionary!
     title: message.notification?.title ?? message.data['title'] ?? 'New Alert',
     body: message.notification?.body ?? message.data['body'] ?? 'You have a new message.',
     notificationDetails: const NotificationDetails(android: androidDetails),
@@ -121,17 +126,15 @@ class _MyAppState extends State<MyApp> {
       String? token = await messaging.getToken();
       debugPrint('📱 Device FCM Token: $token');
 
-      // 💡 BUG FIX: Actually call the subscribe function so Firebase 
-      // knows to route "general" topic messages to this device!
       await subscribeNotificationTopic("general");
 
       // subscribe to the roll number
       await subscribeNotificationTopic((AuthService.currentUser?.rollNumber).toString());
 
-      // 💡 BUG FIX: Changed 'launcher_icon' to the standard '@mipmap/ic_launcher' 
-      // If the file path is incorrect, local notifications crash silently.
       const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-      const InitializationSettings initSettings = InitializationSettings(android: androidSettings);
+      const InitializationSettings initSettings = InitializationSettings(
+        android: androidSettings,
+      );
       
       await flutterLocalNotificationsPlugin.initialize(
         settings: initSettings,
@@ -142,20 +145,26 @@ class _MyAppState extends State<MyApp> {
         },
       );
 
-      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
         debugPrint('📩 Foreground Message Received: ${message.notification?.title}');
         
+        // 💡 SILENT NOTIFICATION ROUTING CHECK (FOREGROUND STATE)
+        // If the push message contains card background updating data, execute it directly and exit.
+        if (message.data.containsKey('image_url')) {
+          await BackgroundCardBgService.processSilentNotification(message.data);
+          return; // Processed silently, skip displaying noisy generic local notifications!
+        }
+
         const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
           'group_chat_channel',
           'EduPortal Notifications',
           importance: Importance.max,
           priority: Priority.high,
-          icon: '@mipmap/ic_launcher', // 💡 Fixed here too
+          icon: '@mipmap/ic_launcher',
         );
 
         flutterLocalNotificationsPlugin.show(
           id: message.hashCode,
-          // 💡 BUG FIX: Ensuring flutter correctly parses from message.notification
           title: message.notification?.title ?? message.data['title'] ?? 'New Alert',
           body: message.notification?.body ?? message.data['body'] ?? 'You have a new message.',
           notificationDetails: const NotificationDetails(android: androidDetails),
