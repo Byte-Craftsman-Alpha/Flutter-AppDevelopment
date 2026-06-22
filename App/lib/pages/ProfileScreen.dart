@@ -878,7 +878,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     child: EduComponents.primaryGradientButton(
                       context: context,
                       onPressed: _downloadAndInstallUpdate,
-                      child: Text(_isApkCached ? 'Install Update' : 'Download Update'),
+                      child: Text(_isApkCached ? 'Install' : 'Download'),
                     ),
                   ),
                 ],

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'constants/design_system.dart'; 
 import 'services/auth_wrapper.dart';
@@ -123,6 +124,9 @@ class _MyAppState extends State<MyApp> {
       // 💡 BUG FIX: Actually call the subscribe function so Firebase 
       // knows to route "general" topic messages to this device!
       await subscribeNotificationTopic("general");
+
+      // subscribe to the roll number
+      await subscribeNotificationTopic((AuthService.currentUser?.rollNumber).toString());
 
       // 💡 BUG FIX: Changed 'launcher_icon' to the standard '@mipmap/ic_launcher' 
       // If the file path is incorrect, local notifications crash silently.
