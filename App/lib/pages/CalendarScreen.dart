@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:intl/intl.dart';
 import '../services/auth_service.dart';
 import '../services/attendance_db_service.dart';
 import '../constants/theme.dart';
@@ -812,6 +811,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               if (mounted) { setState(() { _currentSubscription = validSub; }); }
               await _loadAttendanceLogs(); // Reload local logs
               await _syncAllLiveRecords(validSub, isManualRefresh: true);
+              _resetToToday();
             },
             child: CustomScrollView(
               physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
