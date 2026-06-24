@@ -126,10 +126,10 @@ class _MyAppState extends State<MyApp> {
       String? token = await messaging.getToken();
       debugPrint('📱 Device FCM Token: $token');
 
-      await subscribeNotificationTopic("general");
+      await subscribeNotificationTopic("general"); // subscribe to general notifications
 
       // subscribe to the roll number
-      await subscribeNotificationTopic((AuthService.currentUser?.rollNumber).toString());
+      // await subscribeNotificationTopic((AuthService.currentUser?.rollNumber).toString());
 
       const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
       const InitializationSettings initSettings = InitializationSettings(
