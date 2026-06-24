@@ -90,7 +90,6 @@ class _LoginScreenState extends State<LoginScreen> {
         subscribeNotificationTopic(user.semester.toString()); // Subscribe to new semester-specific topic for targeted notifications
         subscribeNotificationTopic(user.department.toString()); // Subscribe to new department-specific topic for targeted notifications
         subscribeNotificationTopic(user.category.toString()); // Subscribe to new category-specific topic for targeted notifications
-        subscribeNotificationTopic('general'); // Subscribe to new category-specific topic for targeted notifications
 
         // Route user into main Dashboard and clear history stack
         if (mounted) {
