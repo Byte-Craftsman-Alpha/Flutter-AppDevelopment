@@ -98,4 +98,4 @@ jobs:
           curl -X POST -H "Authorization: Bearer $ACCESS_TOKEN" \
           -H "Content-Type: application/json" \
           -d "$PAYLOAD" \
-          "https://fcm.googleapis.com/v1/projects/<YOUR_PROJECT_ID>/messages:send"
+          "https://fcm.googleapis.com/v1/projects/edu-portal-d0a62/messages:send"
