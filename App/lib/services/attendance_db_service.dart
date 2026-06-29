@@ -101,6 +101,41 @@ class AttendanceDbService {
     return weeklyLog;
   }
 
+  static Future<List<Map<String, dynamic>>> getAllAttendanceRecords() async {
+    final db = await database;
+    return db.query('attendance');
+  }
+
+  static Future<void> replaceAllAttendanceRecords(List<Map<String, dynamic>> records) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('attendance');
+      for (final raw in records) {
+        final date = raw['date']?.toString() ?? '';
+        final timeSlot = raw['time_slot']?.toString() ?? raw['timeSlot']?.toString() ?? '';
+        final subject = raw['subject']?.toString() ?? '';
+        final status = raw['status']?.toString() ?? '';
+        if (date.isEmpty || timeSlot.isEmpty || subject.isEmpty || status.isEmpty || status == 'none') {
+          continue;
+        }
+        final id = raw['id']?.toString().isNotEmpty == true
+            ? raw['id'].toString()
+            : "${date}_${timeSlot.replaceAll(' ', '')}_${subject.replaceAll(' ', '')}";
+        await txn.insert(
+          'attendance',
+          {
+            'id': id,
+            'date': date,
+            'time_slot': timeSlot,
+            'subject': subject,
+            'status': status,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
   /// Calculates the official percentage of classes attended.
   /// Standard academic compliance completely ignores cancelled or holiday events.
   static Future<double> calculateAttendancePercentage() async {

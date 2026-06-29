@@ -51,6 +51,7 @@ jobs:
           KEY_STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
         run: |
           flutter build apk --release --no-tree-shake-icons \
+          --dart-define=API_BASE_URL=https://flutter-app-development-mu.vercel.app \
           --build-name=${{ steps.extract_version.outputs.APP_VERSION }} \
           --build-number=${{ github.run_number }}
 

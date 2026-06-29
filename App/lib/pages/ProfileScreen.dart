@@ -13,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../constants/theme.dart';
 
 import '../services/auth_service.dart';
+import '../services/cloud_sync_service.dart';
 
 import 'login.dart'; 
 
@@ -77,6 +78,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _initializeProfileData() async {
+    await CloudSyncService.bootstrapFromCloud();
     final localSub = await AuthService.getSubscribedSchedule();
     if (mounted) {
       setState(() {
@@ -314,7 +316,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     setState(() => _isScheduleLoading = true);
     try {
       final token = await AuthService.getAuthToken();
-      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/schedule/groups?token=$token');
+      final url = Uri.parse('${AuthService.apiBaseUrl}/api/schedule/groups?token=$token');
       final response = await http.get(url).timeout(const Duration(seconds: 10));
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
@@ -337,12 +339,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (!silent && mounted) setState(() => _isSyncingProfile = true);
     try {
       final token = await AuthService.getAuthToken();
-      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/profile/sync?token=$token');
+      final url = Uri.parse('${AuthService.apiBaseUrl}/api/profile/sync?token=$token');
       final response = await http.get(url).timeout(const Duration(seconds: 15));
       if (response.statusCode == 200) {
         final Map<String, dynamic> liveData = json.decode(response.body);
+        final remoteSub = liveData['subscribed_schedule_group']?.toString();
+        if (remoteSub != null && remoteSub.isNotEmpty && remoteSub != 'null') {
+          await AuthService.saveSubscribedSchedule(remoteSub);
+        }
         if (mounted) {
-          setState(() => _liveUserData = liveData);
+          setState(() {
+            _liveUserData = liveData;
+            _selectedSchedule = (remoteSub != null && remoteSub.isNotEmpty && remoteSub != 'null') ? remoteSub : _selectedSchedule;
+          });
           if (!silent) _showToast("Profile synchronized securely.", isError: false);
         }
       } else if (!silent) {
@@ -402,7 +411,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final token = await AuthService.getAuthToken();
 
       final url = Uri.parse(
-        'https://flutter-app-development-mu.vercel.app/api/schedule/fetch'
+        '${AuthService.apiBaseUrl}/api/schedule/fetch'
         '?department=${Uri.encodeComponent(dept)}'
         '&semester=${Uri.encodeComponent(semester)}'
         '&group_name=${Uri.encodeComponent(newValue)}'
@@ -422,6 +431,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         // Save new schedule directly to persistent cache
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('offline_cache_schedule_$newValue', json.encode(rawClassesList));
+
+        final cloudSaved = await CloudSyncService.updateScheduleSubscription(newValue);
+        if (!cloudSaved) {
+          throw Exception('Unable to save schedule subscription in cloud');
+        }
 
         // Save preference and update UI
         await AuthService.saveSubscribedSchedule(newValue);
@@ -449,8 +463,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _handleLogout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
+    await CloudSyncService.logoutDevice();
+    await AuthService.clearSession();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (context) => const LoginScreen()),
@@ -522,9 +536,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           child: RefreshIndicator(
             color: Theme.of(context).primaryColor,
             onRefresh: () async { 
-              _syncLiveProfile(silent: false);
-              _fetchAvailableSchedules();
-              _manualCheckForUpdates();
+              await Future.wait([
+                _syncLiveProfile(silent: false),
+                _fetchAvailableSchedules(),
+                _manualCheckForUpdates(),
+              ]);
             },
             child: SingleChildScrollView(
               physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
@@ -639,7 +655,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           : DropdownButtonHideUnderline(
                               child: DropdownButton<String>(
                                 isExpanded: true,
-                                value: _selectedSchedule,
+                                value: (_selectedSchedule != null && _availableSchedules.contains(_selectedSchedule))
+                                    ? _selectedSchedule
+                                    : null,
                                 hint: Text('Select your academic schedule', style: TextStyle(color: EduDesignTokens.slate400, fontSize: 14)),
                                 icon: EduComponents.icon(context: context, iconData: const SolarIcon(SolarIcons.AltArrowDown, weight: SolarIconWeight.outline), color: EduDesignTokens.slate400),
                                 dropdownColor: Theme.of(context).cardColor,

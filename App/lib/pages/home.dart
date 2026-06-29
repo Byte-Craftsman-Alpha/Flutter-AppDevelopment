@@ -21,6 +21,7 @@ import '../constants/theme.dart';
 import '../services/auth_service.dart';
 import '../services/crypto_service.dart';
 import '../services/attendance_db_service.dart';
+import '../services/cloud_sync_service.dart';
 
 import 'ChatScreen.dart';
 import 'CalendarScreen.dart';
@@ -262,6 +263,8 @@ class _MyHomePageState extends State<MyHomePage> {
   // Remote custom background status indicators
   String? _customBgImagePath;
   Timer? _expiryCheckTimer;
+  Timer? _heartbeatTimer;
+  bool _isOnline = false;
 
   int _parseTimeStr(String timeStr) {
     try {
@@ -288,6 +291,7 @@ class _MyHomePageState extends State<MyHomePage> {
     _fetchDashboardContext();
     _loadAttendanceLogs();
     _loadCustomBackground(); // Verify custom remote background status on runtime initialization
+    _refreshEverything(silent: true);
 
     // Properly chain the async setup so alarms don't try to sync before the plugin initializes
     _initNotificationsAndReminders();
@@ -299,15 +303,36 @@ class _MyHomePageState extends State<MyHomePage> {
     _expiryCheckTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
       _checkBackgroundExpiration();
     });
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      _refreshOnlineStatus();
+    });
   }
 
   // Re-fetch local cache when the schedule has been updated across tabs
   void _onGlobalScheduleUpdate() {
     if (mounted) {
-      _fetchDashboardContext();
+      _refreshEverything(silent: true);
       _loadAttendanceLogs();
       _loadCustomBackground(); // Instantly update active theme variations if background changes are hot-loaded
     }
+  }
+
+  Future<void> _refreshOnlineStatus() async {
+    final online = await CloudSyncService.heartbeat();
+    if (mounted) {
+      setState(() => _isOnline = online);
+    }
+  }
+
+  Future<void> _refreshEverything({bool silent = false}) async {
+    final bootstrapped = await CloudSyncService.bootstrapFromCloud();
+    if (mounted) {
+      setState(() => _isOnline = bootstrapped || CloudSyncService.isOnline);
+    }
+    await _fetchDashboardContext(showError: !silent);
+    await _loadAttendanceLogs();
+    await _loadCustomBackground();
+    await _loadReminders();
   }
 
   Future<void> _loadCustomBackground() async {
@@ -341,6 +366,7 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void dispose() {
     _expiryCheckTimer?.cancel();
+    _heartbeatTimer?.cancel();
     // Always unregister global listeners on memory disposal
     AppStateNotifier.scheduleRefreshNotifier.removeListener(_onGlobalScheduleUpdate);
     super.dispose();
@@ -406,7 +432,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  Future<void> _fetchDashboardContext() async {
+  Future<void> _fetchDashboardContext({bool showError = true}) async {
     setState(() {
       _isLoading = true;
       _hasSyncError = false;
@@ -417,7 +443,7 @@ class _MyHomePageState extends State<MyHomePage> {
       final groupName = await AuthService.getSubscribedSchedule() ?? '';
 
       final vaultUrl = Uri.parse(
-        'https://flutter-app-development-mu.vercel.app/api/vault/records?token=$token',
+        '${AuthService.apiBaseUrl}/api/vault/records?token=$token',
       );
       final vaultRes = await http
           .get(vaultUrl)
@@ -445,6 +471,26 @@ class _MyHomePageState extends State<MyHomePage> {
 
       if (groupName.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
+        try {
+          final user = AuthService.currentUser;
+          final todayKey = _formatDateToKey(DateTime.now());
+          final scheduleUrl = Uri.parse(
+            '${AuthService.apiBaseUrl}/api/schedule/fetch'
+            '?department=${Uri.encodeComponent(user?.department ?? '')}'
+            '&semester=${Uri.encodeComponent(user?.semester ?? '4')}'
+            '&group_name=${Uri.encodeComponent(groupName)}'
+            '&date=${Uri.encodeComponent(todayKey)}',
+          );
+          final scheduleRes = await http.get(scheduleUrl).timeout(const Duration(seconds: 12));
+          if (scheduleRes.statusCode == 200) {
+            final List<dynamic> responseData = json.decode(scheduleRes.body);
+            final scheduleRecord = responseData.isNotEmpty ? responseData.first : {};
+            final List<dynamic> rawClassesList =
+                scheduleRecord['ScheduleLists'] ?? scheduleRecord['schedule_lists'] ?? [];
+            await prefs.setString('offline_cache_schedule_$groupName', json.encode(rawClassesList));
+          }
+        } catch (_) {}
+
         final String? cachedScheduleStr = prefs.getString(
           'offline_cache_schedule_$groupName',
         );
@@ -488,6 +534,14 @@ class _MyHomePageState extends State<MyHomePage> {
       }
 
       final prefs = await SharedPreferences.getInstance();
+      try {
+        final calendarUrl = Uri.parse('${AuthService.apiBaseUrl}/api/schedule/fetch?department=Calendar&semester=Events');
+        final calendarRes = await http.get(calendarUrl).timeout(const Duration(seconds: 12));
+        if (calendarRes.statusCode == 200) {
+          await prefs.setString('offline_cache_monthly_calendar', calendarRes.body);
+        }
+      } catch (_) {}
+
       final String? cachedEventsStr = prefs.getString(
         'offline_cache_monthly_calendar',
       );
@@ -510,9 +564,11 @@ class _MyHomePageState extends State<MyHomePage> {
       debugPrint("⚠️ Dashboard Sync Error: $e");
       if (mounted) {
         setState(() => _hasSyncError = true);
-        _showErrorSnackBar(
-          'Connection failed. Please check your internet and try again.',
-        );
+        if (showError) {
+          _showErrorSnackBar(
+            'Connection failed. Please check your internet and try again.',
+          );
+        }
       }
     } finally {
       if (mounted) {
@@ -599,6 +655,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
       await prefs.setString('offline_tasks_$userRoll', json.encode(_reminders));
       await _syncScheduledNotifications(); // Sync OS Alarms when saving
+      await CloudSyncService.pushState(tasks: _reminders);
     } catch (e) {
       debugPrint("Error saving reminders: $e");
     }
@@ -668,7 +725,7 @@ class _MyHomePageState extends State<MyHomePage> {
     setState(() {
       final index = _reminders.indexWhere((r) => r['id'] == id);
       if (index != -1) {
-        _reminders[index]['is_completed'] =
+              _reminders[index]['is_completed'] =
             !(_reminders[index]['is_completed'] ?? false);
         _sortReminders();
         _saveReminders();
@@ -1379,7 +1436,7 @@ class _MyHomePageState extends State<MyHomePage> {
     try {
       final token = await AuthService.getAuthToken() ?? '';
       final url = Uri.parse(
-        'https://flutter-app-development-mu.vercel.app/api/directory/staff?token=$token',
+        '${AuthService.apiBaseUrl}/api/directory/staff?token=$token',
       );
       final response = await http.get(url).timeout(const Duration(seconds: 15));
       if (response.statusCode == 200) {
@@ -1605,7 +1662,7 @@ class _MyHomePageState extends State<MyHomePage> {
     try {
       final token = await AuthService.getAuthToken() ?? '';
       final url = Uri.parse(
-        'https://flutter-app-development-mu.vercel.app/api/library/books?token=$token',
+        '${AuthService.apiBaseUrl}/api/library/books?token=$token',
       );
       final response = await http.get(url).timeout(const Duration(seconds: 15));
       if (response.statusCode == 200) {
@@ -1862,6 +1919,34 @@ class _MyHomePageState extends State<MyHomePage> {
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.14),
+                        borderRadius: BorderRadius.circular(EduDesignTokens.radiusFull),
+                        border: Border.all(color: Colors.white.withOpacity(0.22)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _isOnline ? Icons.wifi_rounded : Icons.wifi_off_rounded,
+                            size: 14,
+                            color: _isOnline ? Colors.greenAccent : EduDesignTokens.rose100,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _isOnline ? 'Online' : 'Offline',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -2385,6 +2470,7 @@ class _MyHomePageState extends State<MyHomePage> {
               subject: subject,
               status: targetStatus,
             );
+            await CloudSyncService.pushState(tasks: _reminders);
             await _loadAttendanceLogs(); // Sync state on database write
             // scheduleRefreshNotifier is ValueNotifier<int>, increment to trigger redraws safely
             AppStateNotifier.scheduleRefreshNotifier.value = AppStateNotifier.scheduleRefreshNotifier.value + 1;
@@ -2769,9 +2855,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
     return RefreshIndicator(
       onRefresh: () async {
-        await _fetchDashboardContext();
-        await _loadAttendanceLogs();
-        await _loadCustomBackground();
+        await _refreshEverything();
       },
       color: Theme.of(context).primaryColor,
       backgroundColor: Theme.of(context).cardColor,

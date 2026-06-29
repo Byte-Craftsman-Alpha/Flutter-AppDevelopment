@@ -7,6 +7,7 @@ import 'package:flutty_solar_icons/flutty_solar_icons.dart';
 import '../constants/theme.dart'; // Mapped strictly to your centralized design system
 import '../models/user.dart';
 import '../services/auth_service.dart';
+import '../services/cloud_sync_service.dart';
 import 'home.dart'; // Ensure correct import to your dashboard page class
 import 'package:edu_portal/main.dart'; // For global notification helpers and navigatorKey
 
@@ -23,6 +24,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _isPasswordObscured = true;
   bool _isLoading = false; // Tracks active query status to render loading indicator
+  bool _isResetLoading = false;
 
   @override
   void dispose() {
@@ -45,7 +47,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       // 💡 Secure 3-Tier Architecture Call: Routes credentials directly to your live Vercel Gateway
-      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/auth/login');
+      final url = Uri.parse('${AuthService.apiBaseUrl}/api/auth/login');
+      final deviceId = await AuthService.getDeviceId();
       
       // 💡 Added strict timeout to prevent infinite loading on weak networks
       final response = await http.post(
@@ -54,6 +57,7 @@ class _LoginScreenState extends State<LoginScreen> {
         body: jsonEncode({
           'roll_number': rollNumber,
           'password': enteredPassword,
+          'device_id': deviceId,
         }),
       ).timeout(const Duration(seconds: 15));
 
@@ -85,6 +89,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
         // 💡 Save user session persistently alongside the secure server-signed JWT token
         await AuthService.saveSession(user, token: jwtToken);
+        final subscribedGroup = studentData['subscribed_schedule_group']?.toString();
+        if (subscribedGroup != null && subscribedGroup.isNotEmpty && subscribedGroup != 'null') {
+          await AuthService.saveSubscribedSchedule(subscribedGroup);
+        }
+        await CloudSyncService.bootstrapFromCloud();
         unsubscribeFromAllTopics(); // Clear old topic subscriptions to prevent cross-user notification leaks
         subscribeNotificationTopic(user.rollNumber.toString()); // Subscribe to new user-specific topic for targeted notifications
         subscribeNotificationTopic(user.semester.toString()); // Subscribe to new semester-specific topic for targeted notifications
@@ -132,6 +141,137 @@ class _LoginScreenState extends State<LoginScreen> {
         });
       }
     }
+  }
+
+  Future<void> _requestPasswordOtp(String username) async {
+    final deviceId = await AuthService.getDeviceId();
+    final response = await http
+        .post(
+          Uri.parse('${AuthService.apiBaseUrl}/api/auth/password/request-otp'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'username': username, 'device_id': deviceId}),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) {
+      String message = 'Unable to send OTP. Please try again.';
+      try {
+        message = jsonDecode(response.body)['detail']?.toString() ?? message;
+      } catch (_) {}
+      throw Exception(message);
+    }
+  }
+
+  Future<void> _resetPassword(String username, String otp, String newPassword) async {
+    final deviceId = await AuthService.getDeviceId();
+    final response = await http
+        .post(
+          Uri.parse('${AuthService.apiBaseUrl}/api/auth/password/reset'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'username': username,
+            'otp': otp,
+            'new_password': newPassword,
+            'device_id': deviceId,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) {
+      String message = 'Unable to reset password. Please check the OTP.';
+      try {
+        message = jsonDecode(response.body)['detail']?.toString() ?? message;
+      } catch (_) {}
+      throw Exception(message);
+    }
+  }
+
+  void _showResetPasswordSheet() {
+    final usernameController = TextEditingController(text: _rollController.text.trim());
+    final otpController = TextEditingController();
+    final newPasswordController = TextEditingController();
+    bool otpRequested = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).cardColor,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(EduDesignTokens.radius3xl)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text('Reset Password', style: Theme.of(context).textTheme.titleLarge),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: usernameController,
+                      enabled: !_isResetLoading,
+                      decoration: const InputDecoration(labelText: 'Roll number or email'),
+                    ),
+                    const SizedBox(height: 12),
+                    if (otpRequested) ...[
+                      TextField(
+                        controller: otpController,
+                        enabled: !_isResetLoading,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Email OTP'),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: newPasswordController,
+                        enabled: !_isResetLoading,
+                        obscureText: true,
+                        decoration: const InputDecoration(labelText: 'New password'),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    ElevatedButton(
+                      onPressed: _isResetLoading
+                          ? null
+                          : () async {
+                              final username = usernameController.text.trim();
+                              if (username.isEmpty) return;
+                              setModalState(() => _isResetLoading = true);
+                              try {
+                                if (!otpRequested) {
+                                  await _requestPasswordOtp(username);
+                                  otpRequested = true;
+                                  _showErrorSnackBar('OTP sent to your registered email.', isLongDuration: true);
+                                } else {
+                                  await _resetPassword(
+                                    username,
+                                    otpController.text.trim(),
+                                    newPasswordController.text.trim(),
+                                  );
+                                  if (mounted) Navigator.of(this.context).pop();
+                                  _showErrorSnackBar('Password updated. Please sign in with the new password.', isLongDuration: true);
+                                }
+                              } catch (e) {
+                                _showErrorSnackBar(e.toString().replaceFirst('Exception: ', ''), isLongDuration: true);
+                              } finally {
+                                if (mounted) setModalState(() => _isResetLoading = false);
+                              }
+                            },
+                      child: _isResetLoading
+                          ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                          : Text(otpRequested ? 'Update Password' : 'Send OTP'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   void _showErrorSnackBar(String message, {bool isLongDuration = false}) {
@@ -234,7 +374,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           children: [
                             TextFormField(
                               controller: _rollController,
-                              keyboardType: TextInputType.number, // Prompt numeric keypad for numeric roll numbers
+                              keyboardType: TextInputType.emailAddress,
                               enabled: !_isLoading, // Block typing while querying
                               style: textTheme.bodyLarge?.copyWith(fontSize: 14),
                               decoration: InputDecoration(
@@ -262,7 +402,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               controller: _passwordController,
                               obscureText: _isPasswordObscured,
                               enabled: !_isLoading,
-                              keyboardType: TextInputType.number,
+                              keyboardType: TextInputType.visiblePassword,
                               style: textTheme.bodyLarge?.copyWith(fontSize: 14),
                               decoration: InputDecoration(
                                 labelText: 'Password',
@@ -304,6 +444,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                     const SizedBox(height: 30),
+                    TextButton(
+                      onPressed: _isLoading ? null : _showResetPasswordSheet,
+                      child: const Text('Forgot or update password?'),
+                    ),
 
                     _isLoading
                         ? Center(

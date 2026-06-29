@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/foundation.dart'; // 💡 Added for ValueNotifier
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user.dart';
@@ -12,9 +13,14 @@ class AppStateNotifier {
 }
 
 class AuthService {
+  static const String apiBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://192.168.31.138:8000',
+  );
   static const String _userSessionKey = 'user_session_data';
   static const String _scheduleGroupKey = 'subscribed_schedule_group';
   static const String _jwtTokenKey = 'jwt_auth_token'; // 💡 Secure store key for FastAPI JWT token
+  static const String _deviceIdKey = 'eduportal_device_id';
   
   // 💡 Global Static Variables: Accessible from ANY screen/file in your app
   // E.g., AuthService.currentUser?.name or AuthService.jwtToken
@@ -55,6 +61,17 @@ class AuthService {
     }
   }
 
+  static Future<String> getDeviceId() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final existing = prefs.getString(_deviceIdKey);
+    if (existing != null && existing.isNotEmpty) return existing;
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    final id = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    await prefs.setString(_deviceIdKey, id);
+    return id;
+  }
+
   // 💡 Read the persisted or cached JWT token from local storage
   static Future<String?> getAuthToken() async {
     if (jwtToken != null) return jwtToken;
@@ -67,6 +84,11 @@ class AuthService {
   static Future<void> saveSubscribedSchedule(String groupName) async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setString(_scheduleGroupKey, groupName);
+  }
+
+  static Future<void> clearSubscribedSchedule() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_scheduleGroupKey);
   }
 
   // 💡 Read the persisted schedule group from local storage

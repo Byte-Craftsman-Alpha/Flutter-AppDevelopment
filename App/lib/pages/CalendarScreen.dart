@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_service.dart';
 import '../services/attendance_db_service.dart';
+import '../services/cloud_sync_service.dart';
 import '../constants/theme.dart';
 
 // 💡 High Performance Top-Level Isolation Parsers.
@@ -269,10 +270,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
     if (groupName != null && groupName.isNotEmpty) {
       try {
         final url = Uri.parse(
-          'https://flutter-app-development-mu.vercel.app/api/schedule/fetch'
+          '${AuthService.apiBaseUrl}/api/schedule/fetch'
           '?department=${Uri.encodeComponent(dept)}'
           '&semester=${Uri.encodeComponent(semester)}'
           '&group_name=${Uri.encodeComponent(groupName)}'
+          '&date=${Uri.encodeComponent(_formatDateToKey(DateTime.now()))}'
         );
 
         // 💡 SECURE BACKEND CALL WITH TIMEOUT
@@ -310,7 +312,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
     // 💡 Task 2: Sync Monthly Calendar Events regardless of group subscription
     try {
-      final url = Uri.parse('https://flutter-app-development-mu.vercel.app/api/schedule/fetch?department=Calendar&semester=Events');
+      final url = Uri.parse('${AuthService.apiBaseUrl}/api/schedule/fetch?department=Calendar&semester=Events');
       
       // 💡 SECURE BACKEND CALL WITH TIMEOUT
       final response = await http.get(url, headers: {
@@ -591,6 +593,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               subject: subject,
               status: targetStatus,
             );
+            await CloudSyncService.pushState();
             await _loadAttendanceLogs(); // Force reload the tracking state matrix
             // 💡 BUG FIX: scheduleRefreshNotifier is ValueNotifier<int>, increment to trigger redraws safely
             AppStateNotifier.scheduleRefreshNotifier.value = AppStateNotifier.scheduleRefreshNotifier.value + 1;
@@ -806,6 +809,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
           child: RefreshIndicator(
             color: Theme.of(context).primaryColor,
             onRefresh: () async {
+              await CloudSyncService.bootstrapFromCloud();
               final sub = await AuthService.getSubscribedSchedule();
               final validSub = (sub != null && sub.isNotEmpty) ? sub : null;
               if (mounted) { setState(() { _currentSubscription = validSub; }); }
