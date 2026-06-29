@@ -1,14 +1,23 @@
-import 'dart:math';
-import 'package:flutter/foundation.dart'; // 💡 Added for ValueNotifier
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import '../models/user.dart';
 
-// 💡 Global Event Notifier - Broadcasts updates to all active tabs
+// 💡 Unified Global State Manager
 class AppStateNotifier {
-  static final ValueNotifier<int> scheduleRefreshNotifier = ValueNotifier(0);
+  static final ValueNotifier<int> globalRefreshNotifier = ValueNotifier(0);
+  static final ValueNotifier<bool> isOnlineNotifier = ValueNotifier(true);
   
-  static void triggerScheduleRefresh() {
-    scheduleRefreshNotifier.value++;
+  static void triggerGlobalRefresh() {
+    globalRefreshNotifier.value++;
+  }
+  
+  static void setNetworkStatus(bool isOnline) {
+    if (isOnlineNotifier.value != isOnline) {
+      isOnlineNotifier.value = isOnline;
+    }
   }
 }
 
@@ -19,39 +28,43 @@ class AuthService {
   );
   static const String _userSessionKey = 'user_session_data';
   static const String _scheduleGroupKey = 'subscribed_schedule_group';
-  static const String _jwtTokenKey = 'jwt_auth_token'; // 💡 Secure store key for FastAPI JWT token
-  static const String _deviceIdKey = 'eduportal_device_id';
+  static const String _jwtTokenKey = 'jwt_auth_token';
+  static const String _deviceIdKey = 'device_id_token';
   
-  // 💡 Global Static Variables: Accessible from ANY screen/file in your app
-  // E.g., AuthService.currentUser?.name or AuthService.jwtToken
   static UserModel? currentUser;
-  static String? jwtToken; // 💡 Locally cached JWT Token for lightning-fast lookups
+  static String? jwtToken;
+  static String? _cachedDeviceId;
 
-  // 💡 Load the persistent user object and JWT token from storage on app boot
+  static Future<String> getDeviceId() async {
+    if (_cachedDeviceId != null) return _cachedDeviceId!;
+    final prefs = await SharedPreferences.getInstance();
+    _cachedDeviceId = prefs.getString(_deviceIdKey);
+    if (_cachedDeviceId == null) {
+      _cachedDeviceId = const Uuid().v4();
+      await prefs.setString(_deviceIdKey, _cachedDeviceId!);
+    }
+    return _cachedDeviceId!;
+  }
+
   static Future<bool> loadSession() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final String? userJson = prefs.getString(_userSessionKey);
-    final String? token = prefs.getString(_jwtTokenKey);
+    final prefs = await SharedPreferences.getInstance();
+    final userJson = prefs.getString(_userSessionKey);
+    final token = prefs.getString(_jwtTokenKey);
     
     if (userJson != null && token != null) {
       try {
         currentUser = UserModel.fromJson(userJson);
         jwtToken = token;
         return true; 
-      } catch (e) {
-        // Clear corrupt session indices cleanly
-        await prefs.remove(_userSessionKey);
-        await prefs.remove(_jwtTokenKey);
-        currentUser = null;
-        jwtToken = null;
+      } catch (_) {
+        await clearSession();
       }
     }
     return false; 
   }
 
-  // 💡 Save the parsed UserModel and optional JWT token permanently to the phone disk
-  static Future<void> saveSession(UserModel user, {String? token}) async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
+  static Future<void> saveSession(UserModel user, {String? token, String? cloudGroup}) async {
+    final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_userSessionKey, user.toJson());
     currentUser = user; 
     
@@ -59,54 +72,43 @@ class AuthService {
       await prefs.setString(_jwtTokenKey, token);
       jwtToken = token;
     }
+    if (cloudGroup != null && cloudGroup.isNotEmpty) {
+      await saveSubscribedSchedule(cloudGroup, syncToCloud: false);
+    }
   }
 
-  static Future<String> getDeviceId() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final existing = prefs.getString(_deviceIdKey);
-    if (existing != null && existing.isNotEmpty) return existing;
-    final random = Random.secure();
-    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
-    final id = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-    await prefs.setString(_deviceIdKey, id);
-    return id;
-  }
+  static Future<String?> getAuthToken() async => jwtToken;
 
-  // 💡 Read the persisted or cached JWT token from local storage
-  static Future<String?> getAuthToken() async {
-    if (jwtToken != null) return jwtToken;
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    jwtToken = prefs.getString(_jwtTokenKey);
-    return jwtToken;
-  }
-
-  // 💡 Persist the selected schedule group name (e.g., "B.Tech (IT) 2024-28 [A]")
-  static Future<void> saveSubscribedSchedule(String groupName) async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
+  static Future<void> saveSubscribedSchedule(String groupName, {bool syncToCloud = true}) async {
+    final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_scheduleGroupKey, groupName);
+    
+    if (syncToCloud && jwtToken != null) {
+      try {
+        await http.post(
+          Uri.parse('https://flutter-app-development-mu.vercel.app/api/user/update-group'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'token': jwtToken, 'group_name': groupName}),
+        );
+      } catch (_) {
+        // Will sync next time online
+      }
+    }
   }
 
-  static Future<void> clearSubscribedSchedule() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_scheduleGroupKey);
-  }
-
-  // 💡 Read the persisted schedule group from local storage
   static Future<String?> getSubscribedSchedule() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_scheduleGroupKey);
   }
 
-  // 💡 Clear memory and delete all saved data on logout
   static Future<void> clearSession() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_userSessionKey);
-    await prefs.remove(_jwtTokenKey); // Wipe JWT authentication key
-    await prefs.remove(_scheduleGroupKey); // Wipe schedule preference on sign out
+    await prefs.remove(_jwtTokenKey);
+    await prefs.remove(_scheduleGroupKey);
     currentUser = null; 
     jwtToken = null;
   }
 
-  // 💡 Helper check method: Verified both user data and backend security credentials are valid
   static bool get isLoggedIn => currentUser != null && jwtToken != null;
 }
