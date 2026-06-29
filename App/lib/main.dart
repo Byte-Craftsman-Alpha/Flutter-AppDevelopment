@@ -4,11 +4,9 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-import 'constants/design_system.dart'; 
 import 'services/auth_wrapper.dart';
 import 'services/auth_service.dart';
 import 'constants/theme.dart'; 
-import 'pages/home.dart'; // 💡 IMPORT MYHOMEPAGE TO ACCESS BACKGROUND SERVICES
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -30,152 +28,82 @@ Future<void> unsubscribeNotificationTopic(String topic) async {
 Future<void> unsubscribeFromAllTopics() async {
   try {
     await FirebaseMessaging.instance.deleteToken();
-    String? newToken = await FirebaseMessaging.instance.getToken();
-    debugPrint("🚫 Unsubscribed from ALL topics successfully. New FCM Token generated: $newToken");
+    debugPrint("🧹 Cleared all Firebase Notification Topics.");
   } catch (e) {
-    debugPrint("❌ Error unsubscribing from all topics: $e");
+    debugPrint("Error clearing topics: $e");
   }
 }
 
+/// Top-level background notification handler.
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
+  debugPrint("Silent push received in background: ${message.data}");
+  // Removed the legacy BackgroundCardBgService reference
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   
-  // 💡 SILENT NOTIFICATION ROUTING CHECK (BACKGROUND STATE)
-  // If the push message contains card background updating data, execute it directly and exit.
-  if (message.data.containsKey('image_url')) {
-    await BackgroundCardBgService.processSilentNotification(message.data);
-    return; // Prevent triggering any noisy generic notification alerts!
+  // Initialize Firebase
+  try {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  } catch (e) {
+    debugPrint("Firebase init error: $e");
   }
 
-  const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const InitializationSettings initSettings = InitializationSettings(android: androidSettings);
-  
-  await flutterLocalNotificationsPlugin.initialize(
-    settings: initSettings,
-  );
-
-  const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-    'group_chat_channel',
-    'EduPortal Notifications',
-    channelDescription: 'Real-time university alerts and group chats',
-    importance: Importance.max,
-    priority: Priority.high,
-  );
-  
-  await flutterLocalNotificationsPlugin.show(
-    id: message.hashCode,
-    title: message.notification?.title ?? message.data['title'] ?? 'New Alert',
-    body: message.notification?.body ?? message.data['body'] ?? 'You have a new message.',
-    notificationDetails: const NotificationDetails(android: androidDetails),
-    payload: jsonEncode(message.data),
-  );
-}
-
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  await Firebase.initializeApp();
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-
+  // Load User Session & Preferences
   await AuthService.loadSession();
 
-  runApp(const MyApp());
+  runApp(const EduPortalApp());
 }
 
-class MyApp extends StatefulWidget {
-  const MyApp({super.key});
+class EduPortalApp extends StatefulWidget {
+  const EduPortalApp({super.key});
 
   @override
-  State<MyApp> createState() => _MyAppState();
+  State<EduPortalApp> createState() => _EduPortalAppState();
 }
 
-class _MyAppState extends State<MyApp> {
-
+class _EduPortalAppState extends State<EduPortalApp> {
   @override
   void initState() {
     super.initState();
-    _setupPushNotifications();
-    _checkInitialNotification();
+    _setupNotifications();
   }
 
-  Future<void> _checkInitialNotification() async {
-    final NotificationAppLaunchDetails? details = await flutterLocalNotificationsPlugin.getNotificationAppLaunchDetails();
-    if (details != null && details.didNotificationLaunchApp && details.notificationResponse?.payload != null) {
-      _handleNotificationRouting(details.notificationResponse!.payload!);
-    }
-
-    RemoteMessage? initialMessage = await FirebaseMessaging.instance.getInitialMessage();
-    if (initialMessage != null) {
-      _handleNotificationRouting(jsonEncode(initialMessage.data));
-    }
-  }
-
-  Future<void> _setupPushNotifications() async {
-    FirebaseMessaging messaging = FirebaseMessaging.instance;
-
-    NotificationSettings settings = await messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
+  void _setupNotifications() async {
+    const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const InitializationSettings initSettings = InitializationSettings(android: androidSettings);
+    
+    // Updated to use named parameter (initializationSettings)
+    await flutterLocalNotificationsPlugin.initialize(
+      settings: initSettings, 
     );
 
-    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-      debugPrint('🔔 User granted permission');
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      debugPrint("Foreground message received: ${message.notification?.title}");
       
-      String? token = await messaging.getToken();
-      debugPrint('📱 Device FCM Token: $token');
-
-      await subscribeNotificationTopic("general"); // subscribe to general notifications
-
-      // subscribe to the roll number
-      // await subscribeNotificationTopic((AuthService.currentUser?.rollNumber).toString());
-
-      const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-      const InitializationSettings initSettings = InitializationSettings(
-        android: androidSettings,
+      const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+        'eduportal_alerts', 'EduPortal Alerts',
+        importance: Importance.max,
+        priority: Priority.high,
       );
       
-      await flutterLocalNotificationsPlugin.initialize(
-        settings: initSettings,
-        onDidReceiveNotificationResponse: (NotificationResponse response) {
-          if (response.payload != null) {
-            _handleNotificationRouting(response.payload!);
-          }
-        },
+      // Updated to use strict named parameters (id, title, body, notificationDetails, payload)
+      flutterLocalNotificationsPlugin.show(
+        id: message.hashCode,
+        title: message.notification?.title ?? message.data['title'] ?? 'New Alert',
+        body: message.notification?.body ?? message.data['body'] ?? 'You have a new message.',
+        notificationDetails: const NotificationDetails(android: androidDetails),
+        payload: jsonEncode(message.data),
       );
+    });
 
-      FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
-        debugPrint('📩 Foreground Message Received: ${message.notification?.title}');
-        
-        // 💡 SILENT NOTIFICATION ROUTING CHECK (FOREGROUND STATE)
-        // If the push message contains card background updating data, execute it directly and exit.
-        if (message.data.containsKey('image_url')) {
-          await BackgroundCardBgService.processSilentNotification(message.data);
-          return; // Processed silently, skip displaying noisy generic local notifications!
-        }
-
-        const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-          'group_chat_channel',
-          'EduPortal Notifications',
-          importance: Importance.max,
-          priority: Priority.high,
-          icon: '@mipmap/ic_launcher',
-        );
-
-        flutterLocalNotificationsPlugin.show(
-          id: message.hashCode,
-          title: message.notification?.title ?? message.data['title'] ?? 'New Alert',
-          body: message.notification?.body ?? message.data['body'] ?? 'You have a new message.',
-          notificationDetails: const NotificationDetails(android: androidDetails),
-          payload: jsonEncode(message.data),
-        );
-      });
-
-      FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-        _handleNotificationRouting(jsonEncode(message.data));
-      });
-    }
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      _handleNotificationRouting(jsonEncode(message.data));
+    });
   }
 
   void _handleNotificationRouting(String payloadStr) {
@@ -203,10 +131,6 @@ class _MyAppState extends State<MyApp> {
       darkTheme: EduTheme.darkTheme,
       themeMode: ThemeMode.system,
       home: const AuthWrapper(),
-      routes: {
-        // '/chat': (context) => ChatGroupPage(currentUserId: AuthService.currentUser?.rollNumber ?? ''),
-        // '/vault': (context) => VaultPage(currentUserId: AuthService.currentUser?.rollNumber ?? ''),
-      },
     );
   }
 }
