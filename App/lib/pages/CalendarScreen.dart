@@ -3,6 +3,7 @@
 import 'dart:convert';
 import 'dart:async'; // 💡 Added for TimeoutException handling
 import 'dart:io'; // 💡 Added for SocketException handling
+import 'package:edu_portal/constants/design_system.dart';
 import 'package:flutter/foundation.dart'; 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -643,7 +644,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
     Widget buildStatusItem({
       required String status,
-      required IconData icon,
+      required SolarIconData icon,
       required String label,
       required Color activeColor,
       required Color activeBg,
@@ -670,7 +671,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
+                SolarIcon(
                   icon,
                   size: 14,
                   color: isSelected ? activeColor : EduDesignTokens.slate500,
@@ -703,35 +704,35 @@ class _CalendarScreenState extends State<CalendarScreen> {
         children: [
           buildStatusItem(
             status: 'attended',
-            icon: Icons.check_circle_rounded,
+            icon: SolarIcons.CheckCircle,
             label: 'Attended',
             activeColor: EduDesignTokens.emerald600,
             activeBg: EduDesignTokens.emerald50.withOpacity(0.15),
           ),
           buildStatusItem(
             status: 'missed',
-            icon: Icons.cancel_rounded,
+            icon: SolarIcons.CloseCircle,
             label: 'Missed',
             activeColor: EduDesignTokens.rose700,
             activeBg: EduDesignTokens.rose50.withOpacity(0.15),
           ),
           buildStatusItem(
             status: 'cancelled',
-            icon: Icons.block_flipped,
+            icon: SolarIcons.StopCircle,
             label: 'Cancelled',
             activeColor: const Color(0xFFD97706), // 💡 Safe equivalent for amber600
             activeBg: const Color(0xFFFEF3C7).withOpacity(0.15), // 💡 Safe equivalent for amber50
           ),
           buildStatusItem(
             status: 'holiday',
-            icon: Icons.beach_access_rounded,
+            icon: SolarIcons.Umbrella,
             label: 'Holiday',
             activeColor: const Color(0xFF0284C7), // 💡 Safe equivalent for sky600
             activeBg: const Color(0xFFF0F9FF).withOpacity(0.15), // 💡 Safe equivalent for sky50
           ),
           buildStatusItem(
             status: 'none',
-            icon: Icons.refresh_rounded,
+            icon: SolarIcons.RefreshCircle,
             label: 'Reset',
             activeColor: const Color(0xFF475569), // 💡 Safe equivalent for slate600
             activeBg: EduDesignTokens.slate100.withOpacity(0.15),
@@ -757,7 +758,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     if (isOngoing) {
       borderColor = systemExt.borderFocus;
       borderWidth = 2.0;
-      cardBgColor = EduDesignTokens.indigo50.withOpacity(0.15);
+      cardBgColor = EduDesignTokens.indigo50.withOpacity(0.2);
     } else if (currentStatus == 'attended') {
       borderColor = EduDesignTokens.emerald500.withOpacity(0.4);
     } else if (currentStatus == 'missed') {
@@ -774,55 +775,59 @@ class _CalendarScreenState extends State<CalendarScreen> {
     return Container(
       key: ValueKey("${_formatDateToKey(date)}_${rawTime}_${classData['subject']}"),
       margin: const EdgeInsets.only(bottom: 12.0),
-      padding: const EdgeInsets.all(16.0),
-      decoration: BoxDecoration(
-        color: cardBgColor,
-        borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
-        border: Border.all(color: borderColor, width: borderWidth),
-        boxShadow: isOngoing ? systemExt.cardHoverShadow : systemExt.cardBaseShadow,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildSubjectHeader(
-                      classData['subject'] ?? 'Unspecified Subject',
-                      currentStatus,
-                      textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold, height: 1.3, fontSize: 14),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        EduComponents.icon(context: context, iconData: EduIcons.chevronRight, size: 14, color: EduDesignTokens.slate400),
-                        const SizedBox(width: 4),
-                        Expanded(child: Text("${classData['room'] ?? 'TBA'}  ·  ${classData['teacher'] ?? 'Unknown Faculty'}", style: textTheme.bodyMedium?.copyWith(fontSize: 12, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis)),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                constraints: const BoxConstraints(minWidth: 100),
-                decoration: BoxDecoration(
-                  color: isOngoing ? EduDesignTokens.indigo50.withOpacity(0.8) : systemExt.btnSoftBg,
-                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
-                  border: Border.all(color: isOngoing ? EduDesignTokens.indigo500.withOpacity(0.2) : systemExt.btnSoftBorder),
-                ),
-                child: Text(_convertTo12HourRange(rawTime.toString()).replaceAll(' - ', '\n'), textAlign: TextAlign.center, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: isOngoing ? EduDesignTokens.indigo700 : systemExt.btnSoftText, height: 1.3)),
-              ),
-            ],
+      child: EduComponents.card(
+        context: context,
+        child: Container(
+          decoration: BoxDecoration(
+          color: cardBgColor,
+          borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
+          border: Border.all(color: borderColor, width: borderWidth),
           ),
-          
-          // Symmetrical Interactive Hub Strip
-          _buildAttendanceActionBar(classData, date, currentStatus),
-        ],
+          padding: const EdgeInsets.all(16),
+          child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildSubjectHeader(
+                        classData['subject'] ?? 'Unspecified Subject',
+                        currentStatus,
+                        textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold, height: 1.3, fontSize: 14),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          EduComponents.icon(context: context, iconData: EduIcons.chevronRight, size: 14, color: EduDesignTokens.slate400),
+                          const SizedBox(width: 4),
+                          Expanded(child: Text("${classData['room'] ?? 'TBA'}  ·  ${classData['teacher'] ?? 'Unknown Faculty'}", style: textTheme.bodyMedium?.copyWith(fontSize: 12, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  constraints: const BoxConstraints(minWidth: 100),
+                  decoration: BoxDecoration(
+                    color: isOngoing ? EduDesignTokens.indigo50.withOpacity(0.8) : systemExt.btnSoftBg,
+                    borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+                    border: Border.all(color: isOngoing ? EduDesignTokens.indigo500.withOpacity(0.2) : systemExt.btnSoftBorder),
+                  ),
+                  child: Text(_convertTo12HourRange(rawTime.toString()).replaceAll(' - ', '\n'), textAlign: TextAlign.center, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: isOngoing ? EduDesignTokens.indigo700 : systemExt.btnSoftText, height: 1.3)),
+                ),
+              ],
+            ),
+            
+            // Symmetrical Interactive Hub Strip
+            _buildAttendanceActionBar(classData, date, currentStatus),
+          ],
+                ),
+        ),
       ),
     );
   }

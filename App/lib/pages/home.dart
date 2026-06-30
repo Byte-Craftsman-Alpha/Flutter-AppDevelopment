@@ -2060,7 +2060,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
     Widget buildStatusItem({
       required String status,
-      required IconData icon,
+      required SolarIconData icon,
       required String label,
       required Color activeColor,
       required Color activeBg,
@@ -2087,7 +2087,7 @@ class _MyHomePageState extends State<MyHomePage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
+                SolarIcon(
                   icon,
                   size: 14,
                   color: isSelected ? activeColor : EduDesignTokens.slate500,
@@ -2120,35 +2120,35 @@ class _MyHomePageState extends State<MyHomePage> {
         children: [
           buildStatusItem(
             status: 'attended',
-            icon: Icons.check_circle_rounded,
+            icon: SolarIcons.CheckCircle,
             label: 'Attended',
             activeColor: EduDesignTokens.emerald600,
             activeBg: EduDesignTokens.emerald50.withOpacity(0.15),
           ),
           buildStatusItem(
             status: 'missed',
-            icon: Icons.cancel_rounded,
+            icon: SolarIcons.CloseCircle,
             label: 'Missed',
             activeColor: EduDesignTokens.rose700,
             activeBg: EduDesignTokens.rose50.withOpacity(0.15),
           ),
           buildStatusItem(
             status: 'cancelled',
-            icon: Icons.block_flipped,
+            icon: SolarIcons.StopCircle,
             label: 'Cancelled',
             activeColor: const Color(0xFFD97706), // Safe equivalent for amber600
             activeBg: const Color(0xFFFEF3C7).withOpacity(0.15), // Safe equivalent for amber50
           ),
           buildStatusItem(
             status: 'holiday',
-            icon: Icons.beach_access_rounded,
+            icon: SolarIcons.Umbrella,
             label: 'Holiday',
             activeColor: const Color(0xFF0284C7), // Safe equivalent for sky600
             activeBg: const Color(0xFFF0F9FF).withOpacity(0.15), // Safe equivalent for sky50
           ),
           buildStatusItem(
             status: 'none',
-            icon: Icons.refresh_rounded,
+            icon: SolarIcons.RefreshCircle,
             label: 'Reset',
             activeColor: const Color(0xFF475569), // Safe equivalent for slate600
             activeBg: EduDesignTokens.slate100.withOpacity(0.15),
@@ -2221,7 +2221,7 @@ class _MyHomePageState extends State<MyHomePage> {
       if (isOngoing) {
         borderColor = systemExt.borderFocus;
         borderWidth = 2.0;
-        cardBgColor = EduDesignTokens.indigo50.withOpacity(0.15);
+        cardBgColor = EduDesignTokens.indigo50.withOpacity(0.2);
       } else if (currentStatus == 'attended') {
         borderColor = EduDesignTokens.emerald500.withOpacity(0.4);
       } else if (currentStatus == 'missed') {
