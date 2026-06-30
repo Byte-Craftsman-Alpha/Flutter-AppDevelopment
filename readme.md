@@ -1,8 +1,12 @@
-Create a tag locally:
+### Create a tag locally:
+````bash
 git tag v1.0.1
+```
 
-Push that specific tag to GitHub:
+### Push that specific tag to GitHub:
+```bash
 git push origin v1.0.1
+```
 
 ### Google sheet data sync with Supabase database
 ```javascript
