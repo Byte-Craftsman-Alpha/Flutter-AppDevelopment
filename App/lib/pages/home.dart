@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../constants/widgets.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -27,6 +27,19 @@ import 'ChatScreen.dart';
 import 'CalendarScreen.dart';
 import 'VaultScreen.dart';
 import 'ProfileScreen.dart';
+
+// 💡 PERF FIX: JSON decoding of network/cache payloads was happening
+// synchronously on the main thread throughout this file, unlike
+// CalendarScreen.dart which already offloads this work via compute().
+// For large payloads (vault records, full weekly schedules, calendar
+// events) this can block the UI thread for a noticeable stretch — exactly
+// the kind of work that shows up as "Skipped N frames" / a Davey event in
+// logs, especially when several of these run back-to-back at app launch.
+// These run on a background isolate instead.
+List<Map<String, dynamic>> _isolateJsonDecodeList(String body) {
+  final List<dynamic> decoded = jsonDecode(body);
+  return decoded.map((e) => Map<String, dynamic>.from(e)).toList();
+}
 
 /// Top-level background notification handler.
 /// Register this in your background message receiver service (e.g. Firebase Cloud Messaging onBackgroundMessage handler)
@@ -288,14 +301,22 @@ class _MyHomePageState extends State<MyHomePage> {
     super.initState();
     tz.initializeTimeZones(); // Initialize timezone DB for background alarms
     _determineGreeting();
-    _fetchDashboardContext();
-    _loadAttendanceLogs();
-    _loadCustomBackground(); // Verify custom remote background status on runtime initialization
-    _refreshEverything(silent: true);
 
-    // Properly chain the async setup so alarms don't try to sync before the plugin initializes
-    _initNotificationsAndReminders();
-    
+    // 💡 PERF FIX: previously _fetchDashboardContext/_loadAttendanceLogs/
+    // _loadCustomBackground/_loadReminders were each fired here (directly or
+    // via two separate unawaited async chains racing each other) AND again
+    // inside _refreshEverything — duplicating network calls and JSON-decode
+    // work on the main thread right at launch, which contributed to the
+    // multi-second main-thread freeze seen on cold start.
+    //
+    // Now there's exactly one startup chain: initialize the notifications
+    // plugin first (required before any reminder/alarm sync), then run
+    // _refreshEverything once, which owns the full sequence: cloud bootstrap
+    // -> dashboard context -> attendance -> background -> reminders.
+    _initNotificationsAndReminders().then((_) {
+      if (mounted) _refreshEverything(silent: true);
+    });
+
     // Listen for schedule changes from ProfileScreen and CalendarScreen
     AppStateNotifier.scheduleRefreshNotifier.addListener(_onGlobalScheduleUpdate);
 
@@ -308,13 +329,34 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
-  // Re-fetch local cache when the schedule has been updated across tabs
+  // 💡 Set right before this tab bumps scheduleRefreshNotifier itself (e.g.
+  // after marking attendance). Lets the listener below tell "I caused this
+  // ping" apart from "another tab caused this ping", since the notifier
+  // carries no payload. Cleared immediately after the local-only refresh.
+  bool _suppressNextHeavyRefresh = false;
+
+  // Re-fetch local cache when the schedule has been updated across tabs.
+  // Attendance taps from THIS screen already update state optimistically,
+  // so re-running the full network fetch here would blank the dashboard
+  // behind a spinner for no reason — only do that for changes that actually
+  // originated elsewhere (e.g. ProfileScreen changing the subscribed
+  // section, or CalendarScreen editing a different day's attendance).
   void _onGlobalScheduleUpdate() {
-    if (mounted) {
-      _refreshEverything(silent: true);
+    if (!mounted) return;
+
+    if (_suppressNextHeavyRefresh) {
+      _suppressNextHeavyRefresh = false;
+      // Light, local-only resync: re-read today's attendance from the local
+      // DB (cheap, no network) so this tab catches up with whatever the
+      // optimistic update may have approximated, without a visible reload.
       _loadAttendanceLogs();
-      _loadCustomBackground(); // Instantly update active theme variations if background changes are hot-loaded
+      return;
     }
+
+    // External change (other tab/screen) — safe to do the full resync.
+    _refreshEverything(silent: true);
+    _loadAttendanceLogs();
+    _loadCustomBackground(); // Instantly update active theme variations if background changes are hot-loaded
   }
 
   Future<void> _refreshOnlineStatus() async {
@@ -357,10 +399,13 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  // Safely sequences the loading pipeline
+  // Initializes the local-notifications plugin. Reminders themselves are
+  // loaded by _refreshEverything (see initState), which is only kicked off
+  // after this completes — that ordering matters because _loadReminders()
+  // calls _syncScheduledNotifications() internally, which needs the plugin
+  // ready first.
   Future<void> _initNotificationsAndReminders() async {
     await _initializeLocalNotif();
-    await _loadReminders();
   }
 
   @override
@@ -450,9 +495,8 @@ class _MyHomePageState extends State<MyHomePage> {
           .timeout(const Duration(seconds: 15));
 
       if (vaultRes.statusCode == 200) {
-        final List<dynamic> records = json.decode(vaultRes.body);
-        final List<Map<String, dynamic>> typedRecords = records
-            .cast<Map<String, dynamic>>();
+        final List<Map<String, dynamic>> typedRecords =
+            await compute(_isolateJsonDecodeList, vaultRes.body);
 
         typedRecords.sort((a, b) {
           final dateA =
@@ -483,8 +527,9 @@ class _MyHomePageState extends State<MyHomePage> {
           );
           final scheduleRes = await http.get(scheduleUrl).timeout(const Duration(seconds: 12));
           if (scheduleRes.statusCode == 200) {
-            final List<dynamic> responseData = json.decode(scheduleRes.body);
-            final scheduleRecord = responseData.isNotEmpty ? responseData.first : {};
+            final List<Map<String, dynamic>> responseData =
+                await compute(_isolateJsonDecodeList, scheduleRes.body);
+            final scheduleRecord = responseData.isNotEmpty ? responseData.first : <String, dynamic>{};
             final List<dynamic> rawClassesList =
                 scheduleRecord['ScheduleLists'] ?? scheduleRecord['schedule_lists'] ?? [];
             await prefs.setString('offline_cache_schedule_$groupName', json.encode(rawClassesList));
@@ -496,7 +541,8 @@ class _MyHomePageState extends State<MyHomePage> {
         );
 
         if (cachedScheduleStr != null) {
-          final List<dynamic> rawClassesList = json.decode(cachedScheduleStr);
+          final List<Map<String, dynamic>> rawClassesList =
+              await compute(_isolateJsonDecodeList, cachedScheduleStr);
 
           final currentDayString = DateFormat(
             'EEEE',
@@ -505,7 +551,6 @@ class _MyHomePageState extends State<MyHomePage> {
           final currentMinutes = now.hour * 60 + now.minute;
 
           _todayClasses = rawClassesList
-              .map((e) => Map<String, dynamic>.from(e))
               .where((c) {
                 if ((c['day']?.toString().toLowerCase().trim() ?? '') !=
                     currentDayString) {
@@ -547,12 +592,12 @@ class _MyHomePageState extends State<MyHomePage> {
       );
 
       if (cachedEventsStr != null) {
-        final List<dynamic> eventsData = json.decode(cachedEventsStr);
+        final List<Map<String, dynamic>> eventsData =
+            await compute(_isolateJsonDecodeList, cachedEventsStr);
         final todayString =
             "${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}";
 
         _todayEvents = eventsData
-            .map((e) => Map<String, dynamic>.from(e))
             .where((e) {
               final eventDate =
                   e['Date']?.toString() ?? e['date']?.toString() ?? '';
@@ -631,12 +676,11 @@ class _MyHomePageState extends State<MyHomePage> {
           prefs.getString('offline_custom_reminders');
 
       if (str != null) {
-        final List<dynamic> decoded = json.decode(str);
+        final List<Map<String, dynamic>> decoded =
+            await compute(_isolateJsonDecodeList, str);
         if (mounted) {
           setState(() {
-            _reminders = decoded
-                .map((e) => Map<String, dynamic>.from(e as Map))
-                .toList();
+            _reminders = decoded;
             _sortReminders();
           });
         }
@@ -1204,181 +1248,12 @@ class _MyHomePageState extends State<MyHomePage> {
   // SECURE DIGITAL ID & MOBILE SCANNER
   // =========================================================================
   void _showDigitalIdModal() {
-    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
-    final theme = Theme.of(context);
-
     showDialog(
       context: context,
-      builder: (context) {
-        bool isScanning = false;
-        bool isProcessingScan = false;
-
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Dialog(
-              backgroundColor: Colors.transparent,
-              insetPadding: const EdgeInsets.all(16),
-              child: Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: theme.cardColor,
-                  borderRadius: BorderRadius.circular(
-                    EduDesignTokens.radius3xl,
-                  ),
-                  border: Border.all(color: systemExt.borderNeutral),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Digital Identity',
-                            style: theme.textTheme.titleMedium,
-                          ),
-                          IconButton(
-                            onPressed: () => Navigator.pop(context),
-                            icon: const SolarIcon(
-                              SolarIcons.CloseCircle,
-                              color: EduDesignTokens.slate400,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 300),
-                      child: isScanning
-                          ? _buildScannerView(
-                              theme,
-                              systemExt,
-                              isProcessingScan,
-                              (capture) async {
-                                if (isProcessingScan) return;
-                                final List<Barcode> barcodes = capture.barcodes;
-                                if (barcodes.isNotEmpty &&
-                                    barcodes.first.rawValue != null) {
-                                  setModalState(() => isProcessingScan = true);
-
-                                  final decryptedMap =
-                                      CryptoService.decryptPayload(
-                                        barcodes.first.rawValue!,
-                                      );
-
-                                  Navigator.pop(context); // Close scanner modal
-                                  if (decryptedMap != null) {
-                                    _showScannedStudentDetails(decryptedMap);
-                                  } else {
-                                    _showErrorSnackBar(
-                                      'Invalid or Foreign QR Code Detected!',
-                                    );
-                                  }
-                                }
-                              },
-                            )
-                          : Padding(
-                              padding: const EdgeInsets.all(8.0),
-                              child: StudentIdCard(),
-                            ),
-                    ),
-
-                    Padding(
-                      padding: const EdgeInsets.all(20.0),
-                      child: EduComponents.primaryGradientButton(
-                        context: context,
-                        onPressed: () =>
-                            setModalState(() => isScanning = !isScanning),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              isScanning
-                                  ? Icons.person_rounded
-                                  : Icons.qr_code_scanner,
-                              size: 20,
-                              color: Colors.white,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              isScanning ? 'Show My ID' : 'Scan Authenticity',
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildScannerView(
-    ThemeData theme,
-    EduPortalThemeExtension systemExt,
-    bool isProcessing,
-    Function(BarcodeCapture) onDetect,
-  ) {
-    return Container(
-      key: const ValueKey('scanner'),
-      height: 300,
-      margin: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            MobileScanner(
-              controller: MobileScannerController(
-                detectionSpeed: DetectionSpeed.noDuplicates,
-              ),
-              onDetect: onDetect,
-            ),
-            Container(
-              width: 200,
-              height: 200,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.greenAccent, width: 2),
-                borderRadius: BorderRadius.circular(16),
-              ),
-            ),
-            if (isProcessing)
-              Container(
-                color: Colors.black54,
-                child: const Center(
-                  child: CircularProgressIndicator(color: Colors.greenAccent),
-                ),
-              ),
-            Positioned(
-              bottom: 20,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Text(
-                  'Align QR code within frame',
-                  style: TextStyle(color: Colors.white, fontSize: 12),
-                ),
-              ),
-            ),
-          ],
-        ),
+      builder: (context) => _DigitalIdDialog(
+        onValidScan: _showScannedStudentDetails,
+        onInvalidScan: () =>
+            _showErrorSnackBar('Invalid or Foreign QR Code Detected!'),
       ),
     );
   }
@@ -1440,13 +1315,12 @@ class _MyHomePageState extends State<MyHomePage> {
       );
       final response = await http.get(url).timeout(const Duration(seconds: 15));
       if (response.statusCode == 200) {
-        final List<dynamic> raw = json.decode(response.body);
+        final List<Map<String, dynamic>> raw =
+            await compute(_isolateJsonDecodeList, response.body);
         final Map<String, List<Map<String, dynamic>>> grouped = {};
         for (var item in raw) {
           final dept = item['department'] ?? 'Other';
-          grouped
-              .putIfAbsent(dept, () => [])
-              .add(Map<String, dynamic>.from(item));
+          grouped.putIfAbsent(dept, () => []).add(item);
         }
         return grouped;
       }
@@ -1458,203 +1332,11 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void _showStaffDirectoryModal() {
-    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
-    final theme = Theme.of(context);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.85,
-        decoration: BoxDecoration(
-          color: theme.cardColor,
-          borderRadius: const BorderRadius.vertical(
-            top: Radius.circular(EduDesignTokens.radius3xl),
-          ),
-        ),
-        child: Column(
-          children: [
-            const SizedBox(height: 12),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: EduDesignTokens.slate300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: isDark
-                          ? EduDesignTokens.sky500.withOpacity(0.15)
-                          : EduDesignTokens.sky500.withOpacity(0.1),
-                      shape: BoxShape.circle,
-                    ),
-                    child: SolarIcon(
-                      SolarIcons.UsersGroupRounded,
-                      color: EduDesignTokens.sky500,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Text('Staff Directory', style: theme.textTheme.titleLarge),
-                ],
-              ),
-            ),
-            Expanded(
-              child: FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
-                future: _fetchStaffFromBackend(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return Center(
-                      child: CircularProgressIndicator(
-                        color: theme.primaryColor,
-                      ),
-                    );
-                  }
-                  if (snapshot.hasError) {
-                    return const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(24.0),
-                        child: Text(
-                          "Unable to connect to the directory. Please check your internet connection.",
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: EduDesignTokens.rose700,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    );
-                  }
-
-                  final directory = snapshot.data ?? {};
-                  if (directory.isEmpty) {
-                    return const Center(
-                      child: Text("No staff members registered."),
-                    );
-                  }
-
-                  return DefaultTabController(
-                    length: directory.keys.length,
-                    child: Column(
-                      children: [
-                        TabBar(
-                          isScrollable: true,
-                          indicatorColor: theme.primaryColor,
-                          labelColor: theme.primaryColor,
-                          unselectedLabelColor: EduDesignTokens.slate400,
-                          tabs: directory.keys
-                              .map((k) => Tab(text: k))
-                              .toList(),
-                        ),
-                        Expanded(
-                          child: TabBarView(
-                            children: directory.keys.map((category) {
-                              final staff = directory[category]!;
-                              return ListView.builder(
-                                padding: const EdgeInsets.all(16),
-                                itemCount: staff.length,
-                                itemBuilder: (context, index) {
-                                  final person = staff[index];
-                                  return Card(
-                                    elevation: 0,
-                                    margin: const EdgeInsets.only(bottom: 12),
-                                    shape: RoundedRectangleBorder(
-                                      side: BorderSide(
-                                        color: systemExt.borderNeutral,
-                                      ),
-                                      borderRadius: BorderRadius.circular(
-                                        EduDesignTokens.radiusXl,
-                                      ),
-                                    ),
-                                    child: ListTile(
-                                      contentPadding: const EdgeInsets.all(16),
-                                      leading: CircleAvatar(
-                                        backgroundColor:
-                                            EduDesignTokens.slate100,
-                                        child: Text(
-                                          person['name'][0],
-                                          style: const TextStyle(
-                                            color: EduDesignTokens.slate800,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                                      title: Text(
-                                        person['name'],
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      subtitle: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            person['role'],
-                                            style: TextStyle(
-                                              color: theme.primaryColor,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            person['email'],
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      trailing: IconButton(
-                                        icon: const SolarIcon(
-                                          SolarIcons.Copy,
-                                          size: 20,
-                                          color: EduDesignTokens.slate400,
-                                        ),
-                                        onPressed: () {
-                                          Clipboard.setData(
-                                            ClipboardData(
-                                              text: person['email'],
-                                            ),
-                                          );
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).hideCurrentSnackBar();
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            const SnackBar(
-                                              content: Text('Email copied!'),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                  );
-                                },
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
+      builder: (context) => _StaffSearchModal(fetchStaff: _fetchStaffFromBackend),
     );
   }
 
@@ -1666,7 +1348,7 @@ class _MyHomePageState extends State<MyHomePage> {
       );
       final response = await http.get(url).timeout(const Duration(seconds: 15));
       if (response.statusCode == 200) {
-        return List<Map<String, dynamic>>.from(json.decode(response.body));
+        return await compute(_isolateJsonDecodeList, response.body);
       }
       throw Exception('Server rejected payload');
     } catch (e) {
@@ -1676,167 +1358,13 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void _showLibraryModal() {
-    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
-    final theme = Theme.of(context);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.7,
-        decoration: BoxDecoration(
-          color: theme.cardColor,
-          borderRadius: const BorderRadius.vertical(
-            top: Radius.circular(EduDesignTokens.radius3xl),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: 12),
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: EduDesignTokens.slate300,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: isDark
-                          ? EduDesignTokens.emerald500.withOpacity(0.15)
-                          : EduDesignTokens.emerald500.withOpacity(0.1),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.menu_book_rounded,
-                      color: EduDesignTokens.emerald600,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Text('E-Resource Portal', style: theme.textTheme.titleLarge),
-                ],
-              ),
-            ),
-            Expanded(
-              child: FutureBuilder<List<Map<String, dynamic>>>(
-                future: _fetchLibraryFromBackend(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return Center(
-                      child: CircularProgressIndicator(
-                        color: theme.primaryColor,
-                      ),
-                    );
-                  }
-                  if (snapshot.hasError) {
-                    return const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(24.0),
-                        child: Text(
-                          "Unable to connect to the Resources. Please check your internet connection.",
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: EduDesignTokens.rose700,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    );
-                  }
-
-                  final books = snapshot.data ?? [];
-                  if (books.isEmpty) {
-                    return const Center(
-                      child: Text("Resources is currently empty."),
-                    );
-                  }
-
-                  return ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    itemCount: books.length,
-                    itemBuilder: (context, index) {
-                      final book = books[index];
-                      return Card(
-                        elevation: 0,
-                        margin: const EdgeInsets.only(bottom: 12),
-                        shape: RoundedRectangleBorder(
-                          side: BorderSide(color: systemExt.borderNeutral),
-                          borderRadius: BorderRadius.circular(
-                            EduDesignTokens.radiusXl,
-                          ),
-                        ),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.all(16),
-                          title: Text(
-                            book['title'] ?? 'Unknown Title',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 8.0),
-                            child: Row(
-                              children: [
-                                const SolarIcon(
-                                  SolarIcons.User,
-                                  size: 14,
-                                  color: EduDesignTokens.slate400,
-                                ),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    book['author'] ?? 'Unknown',
-                                    style: const TextStyle(fontSize: 12),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          trailing: ElevatedButton.icon(
-                            onPressed: () =>
-                                _launchExternalUrl(book['url'] ?? ''),
-                            icon: const Icon(
-                              Icons.arrow_outward_rounded,
-                              size: 14,
-                              color: Colors.white,
-                            ),
-                            label: const Text(
-                              'Read',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                              ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: EduDesignTokens.emerald600,
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(
-                                  EduDesignTokens.radiusM,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
+      builder: (context) => _LibrarySearchModal(
+        fetchBooks: _fetchLibraryFromBackend,
+        onOpenBook: _launchExternalUrl,
       ),
     );
   }
@@ -2445,6 +1973,84 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// Optimistically marks attendance: flips the UI instantly, persists in the
+  /// background, and rolls back with a toast if the write actually fails.
+  /// This is what makes the tap feel instant instead of waiting on a DB
+  /// write + cloud push + full dashboard reload before anything moves.
+  Future<void> _handleAttendanceTap({
+    required String dateKey,
+    required String rawTime,
+    required String subject,
+    required String targetStatus,
+  }) async {
+    final String logKey = "$rawTime|$subject";
+    final String previousStatus = _todayAttendanceLog[logKey] ?? 'none';
+    final double previousPercentage = _attendancePercentage;
+
+    if (previousStatus == targetStatus) return; // no-op, nothing changed
+
+    // 1. Instant local UI update — no await before this setState.
+    setState(() {
+      if (targetStatus == 'none') {
+        _todayAttendanceLog.remove(logKey);
+      } else {
+        _todayAttendanceLog[logKey] = targetStatus;
+      }
+    });
+
+    // 2. Persist in the background. UI has already moved on.
+    try {
+      await AttendanceDbService.logAttendance(
+        date: dateKey,
+        timeSlot: rawTime,
+        subject: subject,
+        status: targetStatus,
+      );
+
+      // Cloud push and percentage recompute happen silently in the
+      // background; a cloud-push failure here is logged but doesn't roll
+      // back the local mark, since the local DB write already succeeded.
+      unawaited(_syncAttendanceAfterWrite());
+
+      // Tell other tabs (Calendar) something changed, without forcing this
+      // tab to do a heavy network refetch of itself — see
+      // _onGlobalScheduleUpdate, which now distinguishes local vs remote work.
+      _suppressNextHeavyRefresh = true;
+      AppStateNotifier.scheduleRefreshNotifier.value =
+          AppStateNotifier.scheduleRefreshNotifier.value + 1;
+    } catch (e) {
+      debugPrint("⚠️ Attendance write failed, rolling back: $e");
+      if (!mounted) return;
+      setState(() {
+        if (previousStatus == 'none') {
+          _todayAttendanceLog.remove(logKey);
+        } else {
+          _todayAttendanceLog[logKey] = previousStatus;
+        }
+        _attendancePercentage = previousPercentage;
+      });
+      _showErrorSnackBar('Could not save attendance. Please try again.');
+    }
+  }
+
+  /// Background-only: pushes to cloud and refreshes the aggregate percentage
+  /// without blocking or re-rendering the rest of the dashboard.
+  Future<void> _syncAttendanceAfterWrite() async {
+    try {
+      await CloudSyncService.pushState(tasks: _reminders);
+    } catch (e) {
+      debugPrint("⚠️ Cloud push for attendance failed (will retry on next sync): $e");
+    }
+    try {
+      final percentage = await AttendanceDbService.calculateAttendancePercentage();
+      if (mounted) {
+        setState(() => _attendancePercentage = percentage);
+      }
+    } catch (e) {
+      debugPrint("⚠️ Attendance percentage recompute failed: $e");
+    }
+  }
+
   /// Symmetrical quick-logger built for inline interaction on the home tab.
   Widget _buildAttendanceActionBar(Map<String, dynamic> classData, String currentStatus) {
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
@@ -2462,18 +2068,14 @@ class _MyHomePageState extends State<MyHomePage> {
       final bool isSelected = currentStatus == status;
       return Expanded(
         child: GestureDetector(
-          onTap: () async {
+          onTap: () {
             final targetStatus = isSelected ? 'none' : status;
-            await AttendanceDbService.logAttendance(
-              date: dateKey,
-              timeSlot: rawTime.toString(),
+            _handleAttendanceTap(
+              dateKey: dateKey,
+              rawTime: rawTime.toString(),
               subject: subject,
-              status: targetStatus,
+              targetStatus: targetStatus,
             );
-            await CloudSyncService.pushState(tasks: _reminders);
-            await _loadAttendanceLogs(); // Sync state on database write
-            // scheduleRefreshNotifier is ValueNotifier<int>, increment to trigger redraws safely
-            AppStateNotifier.scheduleRefreshNotifier.value = AppStateNotifier.scheduleRefreshNotifier.value + 1;
           },
           behavior: HitTestBehavior.opaque,
           child: Container(
@@ -3066,6 +2668,752 @@ class _MyHomePageState extends State<MyHomePage> {
               weight: SolarIconWeight.bold,
             ),
             label: 'Profile',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// SEARCHABLE LIBRARY / RESOURCES MODAL
+// =============================================================================
+/// Stateful so the search box and filtered results survive rebuilds without
+/// re-hitting the network on every keystroke: the book list is fetched once
+/// via FutureBuilder, cached locally in state, and filtering from then on is
+/// a pure in-memory operation against that cached list.
+// =============================================================================
+// DIGITAL ID / QR SCANNER DIALOG
+// =============================================================================
+/// Extracted into its own StatefulWidget specifically so the camera
+/// controller has a real initState/dispose lifecycle to live in. The
+/// previous implementation built a new MobileScannerController() inline
+/// inside the widget tree, which meant a brand new camera session was
+/// opened on every single setState/rebuild (e.g. every barcode detection
+/// callback) with the old session never explicitly disposed — that's what
+/// caused the multi-second freeze and jank when opening the scanner.
+/// Here the controller is created exactly once and disposed exactly once.
+class _DigitalIdDialog extends StatefulWidget {
+  final void Function(Map<String, dynamic> data) onValidScan;
+  final VoidCallback onInvalidScan;
+
+  const _DigitalIdDialog({
+    required this.onValidScan,
+    required this.onInvalidScan,
+  });
+
+  @override
+  State<_DigitalIdDialog> createState() => _DigitalIdDialogState();
+}
+
+class _DigitalIdDialogState extends State<_DigitalIdDialog> {
+  bool _isScanning = false;
+  bool _isProcessingScan = false;
+  MobileScannerController? _scannerController;
+
+  void _toggleScanning() {
+    setState(() {
+      _isScanning = !_isScanning;
+      _isProcessingScan = false;
+      if (_isScanning) {
+        // Created once per scan session, not on every rebuild.
+        _scannerController = MobileScannerController(
+          detectionSpeed: DetectionSpeed.noDuplicates,
+        );
+      } else {
+        // Release the camera the moment the user backs out of scan mode,
+        // instead of leaving it open until the whole dialog is disposed.
+        _scannerController?.dispose();
+        _scannerController = null;
+      }
+    });
+  }
+
+  void _handleDetect(BarcodeCapture capture) {
+    if (_isProcessingScan) return;
+    final List<Barcode> barcodes = capture.barcodes;
+    if (barcodes.isEmpty || barcodes.first.rawValue == null) return;
+
+    setState(() => _isProcessingScan = true);
+
+    final decryptedMap = CryptoService.decryptPayload(barcodes.first.rawValue!);
+
+    Navigator.pop(context); // Close scanner dialog
+    if (decryptedMap != null) {
+      widget.onValidScan(decryptedMap);
+    } else {
+      widget.onInvalidScan();
+    }
+  }
+
+  @override
+  void dispose() {
+    _scannerController?.dispose();
+    super.dispose();
+  }
+
+  Widget _buildScannerView(ThemeData theme, EduPortalThemeExtension systemExt) {
+    final controller = _scannerController;
+    if (controller == null) return const SizedBox.shrink();
+
+    return Container(
+      key: const ValueKey('scanner'),
+      height: 300,
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(EduDesignTokens.radius2xl),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            MobileScanner(
+              controller: controller,
+              onDetect: _handleDetect,
+            ),
+            Container(
+              width: 200,
+              height: 200,
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.greenAccent, width: 2),
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            if (_isProcessingScan)
+              Container(
+                color: Colors.black54,
+                child: const Center(
+                  child: CircularProgressIndicator(color: Colors.greenAccent),
+                ),
+              ),
+            Positioned(
+              bottom: 20,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Text(
+                  'Align QR code within frame',
+                  style: TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+    final theme = Theme.of(context);
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.all(16),
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: theme.cardColor,
+          borderRadius: BorderRadius.circular(EduDesignTokens.radius3xl),
+          border: Border.all(color: systemExt.borderNeutral),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Digital Identity', style: theme.textTheme.titleMedium),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const SolarIcon(
+                      SolarIcons.CloseCircle,
+                      color: EduDesignTokens.slate400,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: _isScanning
+                  ? _buildScannerView(theme, systemExt)
+                  : Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: StudentIdCard(),
+                    ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: EduComponents.primaryGradientButton(
+                context: context,
+                onPressed: _toggleScanning,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      _isScanning ? Icons.person_rounded : Icons.qr_code_scanner,
+                      size: 20,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(_isScanning ? 'Show My ID' : 'Scan Authenticity'),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LibrarySearchModal extends StatefulWidget {
+  final Future<List<Map<String, dynamic>>> Function() fetchBooks;
+  final void Function(String url) onOpenBook;
+
+  const _LibrarySearchModal({
+    required this.fetchBooks,
+    required this.onOpenBook,
+  });
+
+  @override
+  State<_LibrarySearchModal> createState() => _LibrarySearchModalState();
+}
+
+class _LibrarySearchModalState extends State<_LibrarySearchModal> {
+  late final Future<List<Map<String, dynamic>>> _booksFuture;
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _booksFuture = widget.fetchBooks(); // fetched once, not on every keystroke
+    _searchController.addListener(() {
+      setState(() => _query = _searchController.text.trim().toLowerCase());
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Partial, case-insensitive match across every string-valued field on the
+  /// book record (title, author, and anything else the backend sends, e.g.
+  /// subject/isbn/publisher), so the search stays correct even if the API
+  /// adds new fields later without needing this list updated by hand.
+  bool _matchesQuery(Map<String, dynamic> book, String query) {
+    if (query.isEmpty) return true;
+    for (final value in book.values) {
+      if (value == null) continue;
+      if (value.toString().toLowerCase().contains(query)) return true;
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+    final theme = Theme.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.7,
+      decoration: BoxDecoration(
+        color: theme.cardColor,
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(EduDesignTokens.radius3xl),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 12),
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: EduDesignTokens.slate300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? EduDesignTokens.emerald500.withOpacity(0.15)
+                        : EduDesignTokens.emerald500.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.menu_book_rounded,
+                    color: EduDesignTokens.emerald600,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Text('E-Resource Portal', style: theme.textTheme.titleLarge),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            child: TextField(
+              controller: _searchController,
+              style: theme.textTheme.bodyMedium,
+              decoration: InputDecoration(
+                hintText: 'Search by title, author, subject...',
+                prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                suffixIcon: _query.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        onPressed: () => _searchController.clear(),
+                      )
+                    : null,
+                filled: true,
+                fillColor: systemExt.btnSoftBg,
+                contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: FutureBuilder<List<Map<String, dynamic>>>(
+              future: _booksFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(
+                    child: CircularProgressIndicator(color: theme.primaryColor),
+                  );
+                }
+                if (snapshot.hasError) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24.0),
+                      child: Text(
+                        "Unable to connect to the Resources. Please check your internet connection.",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: EduDesignTokens.rose700,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                final allBooks = snapshot.data ?? [];
+                if (allBooks.isEmpty) {
+                  return const Center(
+                    child: Text("Resources is currently empty."),
+                  );
+                }
+
+                final filteredBooks = allBooks
+                    .where((book) => _matchesQuery(book, _query))
+                    .toList();
+
+                if (filteredBooks.isEmpty) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.search_off_rounded,
+                            color: EduDesignTokens.slate300,
+                            size: 40,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'No matches for "${_searchController.text.trim()}"',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodyMedium,
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  itemCount: filteredBooks.length,
+                  itemBuilder: (context, index) {
+                    final book = filteredBooks[index];
+                    return Card(
+                      elevation: 0,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      shape: RoundedRectangleBorder(
+                        side: BorderSide(color: systemExt.borderNeutral),
+                        borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+                      ),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.all(16),
+                        title: Text(
+                          book['title'] ?? 'Unknown Title',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 8.0),
+                          child: Row(
+                            children: [
+                              const SolarIcon(
+                                SolarIcons.User,
+                                size: 14,
+                                color: EduDesignTokens.slate400,
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  book['author'] ?? 'Unknown',
+                                  style: const TextStyle(fontSize: 12),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        trailing: ElevatedButton.icon(
+                          onPressed: () => widget.onOpenBook(book['url'] ?? ''),
+                          icon: const Icon(
+                            Icons.arrow_outward_rounded,
+                            size: 14,
+                            color: Colors.white,
+                          ),
+                          label: const Text(
+                            'Read',
+                            style: TextStyle(color: Colors.white, fontSize: 12),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: EduDesignTokens.emerald600,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(EduDesignTokens.radiusM),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// SEARCHABLE STAFF DIRECTORY MODAL
+// =============================================================================
+/// Fetched once, filtered in memory thereafter. While a search query is
+/// active, the department tabs collapse into a single flat filtered list
+/// across all departments; clearing the query restores the normal tabbed
+/// browse view.
+class _StaffSearchModal extends StatefulWidget {
+  final Future<Map<String, List<Map<String, dynamic>>>> Function() fetchStaff;
+
+  const _StaffSearchModal({required this.fetchStaff});
+
+  @override
+  State<_StaffSearchModal> createState() => _StaffSearchModalState();
+}
+
+class _StaffSearchModalState extends State<_StaffSearchModal> {
+  late final Future<Map<String, List<Map<String, dynamic>>>> _staffFuture;
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _staffFuture = widget.fetchStaff(); // fetched once, not on every keystroke
+    _searchController.addListener(() {
+      setState(() => _query = _searchController.text.trim().toLowerCase());
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Partial, case-insensitive match against name, role, department, and
+  /// email specifically (rather than every field) since those are the
+  /// fields someone would actually search a staff directory by.
+  bool _matchesQuery(Map<String, dynamic> person, String department, String query) {
+    if (query.isEmpty) return true;
+    final haystack = [
+      person['name'],
+      person['role'],
+      department,
+      person['email'],
+    ].where((v) => v != null).map((v) => v.toString().toLowerCase()).join(' ');
+    return haystack.contains(query);
+  }
+
+  Widget _buildPersonCard(BuildContext context, Map<String, dynamic> person) {
+    final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
+    final theme = Theme.of(context);
+    final String name = (person['name'] ?? '?').toString();
+
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: systemExt.borderNeutral),
+        borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.all(16),
+        leading: CircleAvatar(
+          backgroundColor: EduDesignTokens.slate100,
+          child: Text(
+            name.isNotEmpty ? name[0] : '?',
+            style: const TextStyle(
+              color: EduDesignTokens.slate800,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 4),
+            Text(
+              (person['role'] ?? '').toString(),
+              style: TextStyle(
+                color: theme.primaryColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              (person['email'] ?? '').toString(),
+              style: const TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        trailing: IconButton(
+          icon: const SolarIcon(
+            SolarIcons.Copy,
+            size: 20,
+            color: EduDesignTokens.slate400,
+          ),
+          onPressed: () {
+            Clipboard.setData(ClipboardData(text: (person['email'] ?? '').toString()));
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Email copied!')),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.85,
+      decoration: BoxDecoration(
+        color: theme.cardColor,
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(EduDesignTokens.radius3xl),
+        ),
+      ),
+      child: Column(
+        children: [
+          const SizedBox(height: 12),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: EduDesignTokens.slate300,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? EduDesignTokens.sky500.withOpacity(0.15)
+                        : EduDesignTokens.sky500.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: SolarIcon(
+                    SolarIcons.UsersGroupRounded,
+                    color: EduDesignTokens.sky500,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Text('Staff Directory', style: theme.textTheme.titleLarge),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            child: TextField(
+              controller: _searchController,
+              style: theme.textTheme.bodyMedium,
+              decoration: InputDecoration(
+                hintText: 'Search by name, role, department, email...',
+                prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                suffixIcon: _query.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        onPressed: () => _searchController.clear(),
+                      )
+                    : null,
+                filled: true,
+                fillColor: Theme.of(context).extension<EduPortalThemeExtension>()!.btnSoftBg,
+                contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(EduDesignTokens.radiusXl),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
+              future: _staffFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(
+                    child: CircularProgressIndicator(color: theme.primaryColor),
+                  );
+                }
+                if (snapshot.hasError) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24.0),
+                      child: Text(
+                        "Unable to connect to the directory. Please check your internet connection.",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: EduDesignTokens.rose700,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                final directory = snapshot.data ?? {};
+                if (directory.isEmpty) {
+                  return const Center(child: Text("No staff members registered."));
+                }
+
+                // While searching: collapse every department into one flat,
+                // filtered list. Empty query: restore the normal tabbed view.
+                if (_query.isNotEmpty) {
+                  final List<Map<String, dynamic>> matches = [];
+                  directory.forEach((department, people) {
+                    for (final person in people) {
+                      if (_matchesQuery(person, department, _query)) {
+                        matches.add(person);
+                      }
+                    }
+                  });
+
+                  if (matches.isEmpty) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24.0),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.search_off_rounded,
+                              color: EduDesignTokens.slate300,
+                              size: 40,
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'No staff found for "${_searchController.text.trim()}"',
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+
+                  return ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: matches.length,
+                    itemBuilder: (context, index) => _buildPersonCard(context, matches[index]),
+                  );
+                }
+
+                return DefaultTabController(
+                  length: directory.keys.length,
+                  child: Column(
+                    children: [
+                      TabBar(
+                        isScrollable: true,
+                        indicatorColor: theme.primaryColor,
+                        labelColor: theme.primaryColor,
+                        unselectedLabelColor: EduDesignTokens.slate400,
+                        tabs: directory.keys.map((k) => Tab(text: k)).toList(),
+                      ),
+                      Expanded(
+                        child: TabBarView(
+                          children: directory.keys.map((category) {
+                            final staff = directory[category]!;
+                            return ListView.builder(
+                              padding: const EdgeInsets.all(16),
+                              itemCount: staff.length,
+                              itemBuilder: (context, index) =>
+                                  _buildPersonCard(context, staff[index]),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
           ),
         ],
       ),

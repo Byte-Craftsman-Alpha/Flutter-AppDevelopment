@@ -1,8 +1,4 @@
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-import 'package:google_fonts/google_fonts.dart'; // Ensure this is in pubspec.yaml
 
 // Custom project imports (Assuming these exist in your structure)
 import 'design_system.dart';
@@ -10,91 +6,91 @@ import '../constants/theme.dart';
 import '../services/auth_service.dart';
 import '../services/crypto_service.dart';
 
-class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
-  final String title;
-  final String? subtitle;
-  final String profileInitials;
+// class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
+//   final String title;
+//   final String? subtitle;
+//   final String profileInitials;
 
-  const CustomAppBar({
-    super.key,
-    required this.title,
-    required this.profileInitials,
-    this.subtitle, // Properly initialized as an optional parameter
-  });
+//   const CustomAppBar({
+//     super.key,
+//     required this.title,
+//     required this.profileInitials,
+//     this.subtitle, // Properly initialized as an optional parameter
+//   });
 
-  @override
-  Widget build(BuildContext context) {
-    DateTime now = DateTime.now();
-    String formattedDate = DateFormat('EEEE, MMMM d, yyyy').format(now);
+//   @override
+//   Widget build(BuildContext context) {
+//     DateTime now = DateTime.now();
+//     String formattedDate = DateFormat('EEEE, MMMM d, yyyy').format(now);
     
-    return Container(
-      // Adds a subtle background color blending with Material 3 app bars
-      color: Colors.white,
-      // SafeArea prevents notch overlap, padding keeps items beautifully spaced
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // Dynamic Text Header Block
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: GoogleFonts.publicSans().fontFamily,
-                        color: const Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle ?? formattedDate,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontFamily: GoogleFonts.publicSans().fontFamily,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+//     return Container(
+//       // Adds a subtle background color blending with Material 3 app bars
+//       color: Colors.white,
+//       // SafeArea prevents notch overlap, padding keeps items beautifully spaced
+//       child: SafeArea(
+//         child: Padding(
+//           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+//           child: Row(
+//             crossAxisAlignment: CrossAxisAlignment.center,
+//             children: [
+//               // Dynamic Text Header Block
+//               Expanded(
+//                 child: Column(
+//                   crossAxisAlignment: CrossAxisAlignment.start,
+//                   mainAxisSize: MainAxisSize.min,
+//                   children: [
+//                     Text(
+//                       title,
+//                       style: TextStyle(
+//                         fontSize: 20,
+//                         fontWeight: FontWeight.bold,
+//                         fontFamily: GoogleFonts.publicSans().fontFamily,
+//                         color: const Color(0xFF0F172A),
+//                       ),
+//                     ),
+//                     const SizedBox(height: 2),
+//                     Text(
+//                       subtitle ?? formattedDate,
+//                       style: TextStyle(
+//                         fontSize: 12,
+//                         fontFamily: GoogleFonts.publicSans().fontFamily,
+//                         color: Colors.grey.shade600,
+//                       ),
+//                     ),
+//                   ],
+//                 ),
+//               ),
               
-              // Reusable Avatar Badge
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEEF2FF),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Center(
-                  child: Text(
-                    profileInitials,
-                    style: const TextStyle(
-                      color: Color(0xFF3730A3),
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+//               // Reusable Avatar Badge
+//               Container(
+//                 width: 40,
+//                 height: 40,
+//                 decoration: BoxDecoration(
+//                   color: const Color(0xFFEEF2FF),
+//                   borderRadius: BorderRadius.circular(12),
+//                 ),
+//                 child: Center(
+//                   child: Text(
+//                     profileInitials,
+//                     style: const TextStyle(
+//                       color: Color(0xFF3730A3),
+//                       fontWeight: FontWeight.bold,
+//                       fontSize: 14,
+//                     ),
+//                   ),
+//                 ),
+//               ),
+//             ],
+//           ),
+//         ),
+//       ),
+//     );
+//   }
 
-  // 💡 Crucial: Tell Flutter how much vertical height your custom widget needs
-  @override
-  Size get preferredSize => const Size.fromHeight(70.0);
-}
+//   // 💡 Crucial: Tell Flutter how much vertical height your custom widget needs
+//   @override
+//   Size get preferredSize => const Size.fromHeight(70.0);
+// }
 
 class StudentIdCard extends StatelessWidget {
   const StudentIdCard({Key? key}) : super(key: key);

@@ -1,3 +1,5 @@
+// ignore_for_file: file_names
+
 import 'dart:convert';
 import 'dart:async'; // 💡 Added for TimeoutException handling
 import 'dart:io'; // 💡 Added for SocketException handling
@@ -568,6 +570,70 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
+  /// Optimistically marks attendance: flips the matched class card instantly
+  /// and persists in the background, rolling back with a toast if the write
+  /// fails. Avoids waiting on a DB write + cloud push + full week reload
+  /// before the card visibly updates.
+  Future<void> _handleAttendanceTap({
+    required String dateKey,
+    required String rawTime,
+    required String subject,
+    required String targetStatus,
+  }) async {
+    final String logKey = "$rawTime|$subject";
+    final String previousStatus = _weeklyAttendanceLog[dateKey]?[logKey] ?? 'none';
+
+    if (previousStatus == targetStatus) return; // no-op
+
+    // 1. Instant local UI update for this exact class card.
+    setState(() {
+      final dayMap = _weeklyAttendanceLog.putIfAbsent(dateKey, () => {});
+      if (targetStatus == 'none') {
+        dayMap.remove(logKey);
+      } else {
+        dayMap[logKey] = targetStatus;
+      }
+    });
+
+    // 2. Persist in the background; UI has already moved on.
+    try {
+      await AttendanceDbService.logAttendance(
+        date: dateKey,
+        timeSlot: rawTime,
+        subject: subject,
+        status: targetStatus,
+      );
+      unawaited(_pushCloudStateSafely());
+
+      // Let other tabs (Home dashboard) know to refresh their own local
+      // attendance state — this doesn't force anything heavy on this screen.
+      AppStateNotifier.scheduleRefreshNotifier.value =
+          AppStateNotifier.scheduleRefreshNotifier.value + 1;
+    } catch (e) {
+      debugPrint("⚠️ Attendance write failed, rolling back: $e");
+      if (!mounted) return;
+      setState(() {
+        final dayMap = _weeklyAttendanceLog.putIfAbsent(dateKey, () => {});
+        if (previousStatus == 'none') {
+          dayMap.remove(logKey);
+        } else {
+          dayMap[logKey] = previousStatus;
+        }
+      });
+      _showOfflineToast('Could not save attendance. Please try again.', isError: true);
+    }
+  }
+
+  /// Background-only cloud push; failures are logged, not surfaced, since
+  /// the local DB write (source of truth for the UI) already succeeded.
+  Future<void> _pushCloudStateSafely() async {
+    try {
+      await CloudSyncService.pushState();
+    } catch (e) {
+      debugPrint("⚠️ Cloud push for attendance failed (will retry on next sync): $e");
+    }
+  }
+
   /// Builds a symmetric control bar to let users easily log class status.
   Widget _buildAttendanceActionBar(Map<String, dynamic> classData, DateTime date, String currentStatus) {
     final systemExt = Theme.of(context).extension<EduPortalThemeExtension>()!;
@@ -585,18 +651,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
       final bool isSelected = currentStatus == status;
       return Expanded(
         child: GestureDetector(
-          onTap: () async {
+          onTap: () {
             final targetStatus = isSelected ? 'none' : status;
-            await AttendanceDbService.logAttendance(
-              date: dateKey,
-              timeSlot: rawTime.toString(),
+            _handleAttendanceTap(
+              dateKey: dateKey,
+              rawTime: rawTime.toString(),
               subject: subject,
-              status: targetStatus,
+              targetStatus: targetStatus,
             );
-            await CloudSyncService.pushState();
-            await _loadAttendanceLogs(); // Force reload the tracking state matrix
-            // 💡 BUG FIX: scheduleRefreshNotifier is ValueNotifier<int>, increment to trigger redraws safely
-            AppStateNotifier.scheduleRefreshNotifier.value = AppStateNotifier.scheduleRefreshNotifier.value + 1;
           },
           behavior: HitTestBehavior.opaque,
           child: Container(

@@ -1,3 +1,5 @@
+// ignore_for_file: file_names
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
@@ -9,7 +11,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:open_file/open_file.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:cross_file/cross_file.dart';
 import 'package:flutty_solar_icons/flutty_solar_icons.dart';
 import '../constants/theme.dart';
 import '../services/auth_service.dart';
